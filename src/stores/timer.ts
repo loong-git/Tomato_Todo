@@ -14,11 +14,55 @@ export const useTimerStore = defineStore('timer', () => {
   const currentTaskIds = ref<string[]>([])
   const justCompleted = ref(false)
   const focusModeActive = ref(false)
+  const streakCount = ref(0)
+  const lastCompletionDate = ref('')
 
   let timerInterval: ReturnType<typeof setInterval> | null = null
 
+  // 加载连胜数据
+  async function loadStreakData() {
+    console.log('[Timer] 开始加载连胜数据')
+    if (window.electronAPI) {
+      try {
+        const data = await window.electronAPI.store.get('streakData') as { streakCount: number; lastCompletionDate: string } | undefined
+        console.log('[Timer] 原始数据:', data)
+        if (data) {
+          const today = new Date().toDateString()
+          // 如果是同一天，继续累加
+          if (data.lastCompletionDate === today) {
+            streakCount.value = data.streakCount || 0
+            lastCompletionDate.value = data.lastCompletionDate || ''
+            console.log('[Timer] 今日连胜继续:', streakCount.value)
+          } else {
+            // 新的一天，重置为 0（之后 complete 会 +1）
+            streakCount.value = 0
+            lastCompletionDate.value = today
+            console.log('[Timer] 新的一天，连胜重置')
+          }
+        } else {
+          console.log('[Timer] 没有保存的连胜数据')
+        }
+      } catch (e) {
+        console.error('[Timer] 加载连胜数据失败:', e)
+      }
+    }
+  }
+
+  // 保存连胜数据
+  function saveStreakData() {
+    console.log('[Timer] 保存连胜数据:', streakCount.value, lastCompletionDate.value)
+    if (window.electronAPI) {
+      window.electronAPI.store.set('streakData', {
+        streakCount: streakCount.value,
+        lastCompletionDate: lastCompletionDate.value
+      }).then(() => {
+        console.log('[Timer] 保存成功')
+      })
+    }
+  }
+
   // 监听专注模式变化
-  watch(focusModeActive, (active) => {
+  watch(focusModeActive, () => {
     // 不再自动停止计时器，让主窗口和小窗口同时运行
   })
 
@@ -49,8 +93,16 @@ export const useTimerStore = defineStore('timer', () => {
   async function playSound() {
     if (!settingsStore.settings.soundEnabled) return
 
-    const soundPath = settingsStore.settings.soundPath
+    const { soundType, soundPath } = settingsStore.settings
 
+    // 如果有内置音效类型，优先使用
+    if (soundType && soundType !== 'custom') {
+      const { playPresetSound } = await import('@/utils')
+      playPresetSound(soundType)
+      return
+    }
+
+    // 自定义音频文件
     if (soundPath && window.electronAPI) {
       try {
         const success = await window.electronAPI.audio.play(soundPath)
@@ -137,9 +189,28 @@ export const useTimerStore = defineStore('timer', () => {
     justCompleted.value = true
     if (mode.value === 'focus') {
       pomodoroCount.value++
+
+      // 更新连胜计数
+      const today = new Date().toDateString()
+      console.log('[Timer] 日期比较:', lastCompletionDate.value, '===', today, '结果:', lastCompletionDate.value === today)
+      if (lastCompletionDate.value === today) {
+        streakCount.value++
+        console.log('[Timer] 连胜+1:', streakCount.value)
+      } else {
+        streakCount.value = 1
+        lastCompletionDate.value = today
+        console.log('[Timer] 新的一天，连胜重置为 1')
+      }
+      saveStreakData()
     }
     playSound()
     showNotification()
+
+    // 切换到前台显示动画
+    if (window.electronAPI) {
+      window.electronAPI.window.bringToFront()
+    }
+
     switchToNextMode()
     console.log('after complete, mode:', mode.value, 'timeLeft:', timeLeft.value)
   }
@@ -182,8 +253,11 @@ export const useTimerStore = defineStore('timer', () => {
     currentTaskIds,
     justCompleted,
     focusModeActive,
+    streakCount,
+    lastCompletionDate,
     formattedTime,
     currentDuration,
+    loadStreakData,
     start,
     pause,
     reset,

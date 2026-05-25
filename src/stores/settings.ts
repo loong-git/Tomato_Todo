@@ -10,28 +10,30 @@ const defaultSettings: Settings = {
   dailyGoal: 8,
   soundEnabled: true,
   notificationEnabled: true,
+  soundType: 'bell',
   soundPath: '',
-  theme: 'dark'
+  theme: 'dark',
+  closeBehavior: 'tray'
 }
 
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<Settings>({ ...defaultSettings })
 
-  function updateSettings(updates: Partial<Settings>) {
+  async function updateSettings(updates: Partial<Settings>) {
     Object.assign(settings.value, updates)
-    saveSettings()
+    await saveSettings()
   }
 
-  function resetSettings() {
+  async function resetSettings() {
     settings.value = { ...defaultSettings }
-    saveSettings()
+    await saveSettings()
   }
 
-  function saveSettings() {
+  async function saveSettings() {
     if (window.electronAPI) {
       // 深拷贝确保只发送可序列化的数据
       const data = JSON.parse(JSON.stringify(settings.value))
-      window.electronAPI.store.set('settings', data)
+      await window.electronAPI.store.set('settings', data)
     }
   }
 

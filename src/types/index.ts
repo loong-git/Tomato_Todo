@@ -16,6 +16,8 @@ export interface PomodoroRecord {
   completedAt: number
 }
 
+export type SoundType = 'bell' | 'forest' | 'ding' | 'tick' | 'custom'
+
 export interface Settings {
   focusDuration: number
   shortBreakDuration: number
@@ -24,8 +26,10 @@ export interface Settings {
   dailyGoal: number
   soundEnabled: boolean
   notificationEnabled: boolean
+  soundType: SoundType
   soundPath: string
   theme: 'dark' | 'light'
+  closeBehavior: 'tray' | 'quit'
 }
 
 export type TimerMode = 'focus' | 'shortBreak' | 'longBreak'

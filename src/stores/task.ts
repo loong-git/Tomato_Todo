@@ -6,8 +6,24 @@ import { generateId } from '@/utils'
 export const useTaskStore = defineStore('task', () => {
   const tasks = ref<Task[]>([])
 
-  const activeTasks = computed(() => tasks.value.filter(t => !t.isCompleted && !t.archivedAt))
+  // 今天添加的任务（无论完成与否）
+  const activeTasks = computed(() => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const todayStart = today.getTime()
+    return tasks.value.filter(t => !t.archivedAt && t.createdAt >= todayStart)
+  })
+
+  // 历史任务：昨天及之前的所有任务
+  const historyTasks = computed(() => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const todayStart = today.getTime()
+    return tasks.value.filter(t => !t.archivedAt && t.createdAt < todayStart)
+  })
+
   const completedTasks = computed(() => tasks.value.filter(t => t.isCompleted && !t.archivedAt))
+
   const archivedTasks = computed(() => tasks.value.filter(t => t.archivedAt))
 
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
@@ -106,18 +122,89 @@ export const useTaskStore = defineStore('task', () => {
   async function exportAllData(): Promise<string> {
     const { useSettingsStore } = await import('./settings')
     const { useStatsStore } = await import('./stats')
+    const { useTimerStore } = await import('./timer')
 
     const settingsStore = useSettingsStore()
     const statsStore = useStatsStore()
+    const timerStore = useTimerStore()
 
     const data = {
       version: 1,
       exportedAt: Date.now(),
       tasks: JSON.parse(JSON.stringify(tasks.value)),
       records: JSON.parse(JSON.stringify(statsStore.records)),
-      settings: JSON.parse(JSON.stringify(settingsStore.settings))
+      settings: JSON.parse(JSON.stringify(settingsStore.settings)),
+      streakData: {
+        streakCount: timerStore.streakCount,
+        lastCompletionDate: timerStore.lastCompletionDate
+      }
     }
     return JSON.stringify(data, null, 2)
+  }
+
+  async function exportAsCSV(): Promise<string> {
+    const { useStatsStore } = await import('./stats')
+    const statsStore = useStatsStore()
+
+    const lines: string[] = []
+
+    // 提示用户调整列宽
+    lines.push('提示: 请双击列头分隔线调整列宽以显示完整内容')
+
+    // 任务汇总
+    lines.push('=== 任务汇总 ===')
+    lines.push('任务名称,完成番茄数,创建时间,完成时间,状态')
+
+    for (const task of tasks.value) {
+      const createdDate = new Date(task.createdAt).toLocaleDateString('zh-CN')
+      const completedDate = task.completedAt ? new Date(task.completedAt).toLocaleDateString('zh-CN') : '-'
+      const status = task.isCompleted ? '已完成' : (task.archivedAt ? '已归档' : '进行中')
+      lines.push(`"${task.name}",${task.completedPomodoros},${createdDate},${completedDate},${status}`)
+    }
+
+    lines.push('')
+
+    // 番茄记录
+    lines.push('=== 番茄记录 ===')
+    lines.push('日期,时间,类型,时长(分钟),关联任务')
+
+    for (const record of statsStore.records) {
+      const date = new Date(record.completedAt).toLocaleDateString('zh-CN')
+      const time = new Date(record.completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+      const typeText = record.type === 'focus' ? '专注' : (record.type === 'shortBreak' ? '短休息' : '长休息')
+      const taskName = tasks.value.find(t => t.id === record.taskId)?.name || '-'
+      lines.push(`${date},${time},${typeText},${Math.round(record.duration / 60)},"${taskName}"`)
+    }
+
+    lines.push('')
+
+    // 统计信息
+    lines.push('=== 统计信息 ===')
+
+    const now = new Date()
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const weekStart = todayStart - 7 * 24 * 60 * 60 * 1000
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+    const yearStart = new Date(now.getFullYear(), 0, 1).getTime()
+
+    const todayRecords = statsStore.records.filter(r => r.completedAt >= todayStart && r.type === 'focus')
+    const weekRecords = statsStore.records.filter(r => r.completedAt >= weekStart && r.type === 'focus')
+    const monthRecords = statsStore.records.filter(r => r.completedAt >= monthStart && r.type === 'focus')
+    const yearRecords = statsStore.records.filter(r => r.completedAt >= yearStart && r.type === 'focus')
+
+    lines.push(`今日专注次数,${todayRecords.length}`)
+    lines.push(`今日专注分钟,${Math.round(todayRecords.reduce((sum, r) => sum + r.duration, 0) / 60)}`)
+    lines.push(`本周专注次数,${weekRecords.length}`)
+    lines.push(`本周专注分钟,${Math.round(weekRecords.reduce((sum, r) => sum + r.duration, 0) / 60)}`)
+    lines.push(`本月专注次数,${monthRecords.length}`)
+    lines.push(`本月专注分钟,${Math.round(monthRecords.reduce((sum, r) => sum + r.duration, 0) / 60)}`)
+    lines.push(`本年专注次数,${yearRecords.length}`)
+    lines.push(`本年专注分钟,${Math.round(yearRecords.reduce((sum, r) => sum + r.duration, 0) / 60)}`)
+    lines.push(`总任务数,${tasks.value.length}`)
+    lines.push(`已完成任务,${tasks.value.filter(t => t.isCompleted).length}`)
+    lines.push(`进行中任务,${tasks.value.filter(t => !t.isCompleted && !t.archivedAt).length}`)
+
+    return lines.join('\n')
   }
 
   async function importAllData(jsonStr: string, merge: boolean = true): Promise<{ success: boolean; message: string }> {
@@ -197,6 +284,7 @@ export const useTaskStore = defineStore('task', () => {
   return {
     tasks,
     activeTasks,
+    historyTasks,
     completedTasks,
     archivedTasks,
     addTask,
@@ -209,6 +297,7 @@ export const useTaskStore = defineStore('task', () => {
     unarchiveTask,
     deleteArchivedTask,
     exportAllData,
+    exportAsCSV,
     importAllData,
     loadTasks
   }

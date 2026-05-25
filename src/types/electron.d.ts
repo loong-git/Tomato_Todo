@@ -10,6 +10,7 @@ interface ElectronAPI {
   dialog: {
     openFile: () => Promise<string>
     saveFile: (data: string, defaultName: string) => Promise<boolean>
+    saveCSV: (data: string, defaultName: string) => Promise<boolean>
     openJsonFile: () => Promise<string | null>
   }
   audio: {
@@ -29,6 +30,11 @@ interface ElectronAPI {
   window: {
     minimize: () => void
     close: () => void
+    bringToFront: () => void
+  }
+  tray: {
+    updateState: (data: { timeLeft: number; isRunning: boolean }) => void
+    onToggleTimer: (callback: () => void) => void
   }
 }
 

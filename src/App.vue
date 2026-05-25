@@ -8,6 +8,8 @@ import TaskList from '@/components/TaskList.vue'
 import StatsDisplay from '@/components/StatsDisplay.vue'
 import SettingsPanel from '@/components/SettingsPanel.vue'
 import FocusWindow from '@/components/FocusWindow.vue'
+import CelebrationOverlay from '@/components/CelebrationOverlay.vue'
+import DataManager from '@/components/DataManager.vue'
 
 const timerStore = useTimerStore()
 const taskStore = useTaskStore()
@@ -26,14 +28,77 @@ const isDark = computed({
   }
 })
 
+// 键盘快捷键处理
+function handleKeydown(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement).tagName
+  const isInputField = tag === 'INPUT' || tag === 'TEXTAREA'
+
+  console.log('[键盘事件] key:', e.key, 'target:', tag)
+
+  // 输入框中只响应 Escape
+  if (isInputField) {
+    if (e.key === 'Escape') {
+      console.log('[键盘事件] 输入框中按 Escape')
+      ;(e.target as HTMLInputElement).blur()
+    }
+    return
+  }
+
+  switch (e.key) {
+    case ' ':
+      e.preventDefault()
+      console.log('[键盘事件] Space - 切换计时器')
+      timerStore.isRunning ? timerStore.pause() : timerStore.start()
+      break
+    case 'r':
+    case 'R':
+      console.log('[键盘事件] R - 重置计时器')
+      timerStore.reset()
+      break
+    case 's':
+    case 'S':
+      console.log('[键盘事件] S - 打开设置')
+      settingsRef.value?.open()
+      break
+    case 'n':
+    case 'N':
+      console.log('[键盘事件] N - 聚焦任务输入框')
+      document.querySelector<HTMLInputElement>('.task-input')?.focus()
+      break
+    case '1':
+      console.log('[键盘事件] 1 - 专注模式')
+      timerStore.setMode('focus')
+      break
+    case '2':
+      console.log('[键盘事件] 2 - 短休息')
+      timerStore.setMode('shortBreak')
+      break
+    case '3':
+      console.log('[键盘事件] 3 - 长休息')
+      timerStore.setMode('longBreak')
+      break
+    case 'Escape':
+      console.log('[键盘事件] Escape - 关闭弹窗')
+      settingsRef.value?.close?.()
+      break
+  }
+}
+
 onMounted(async () => {
+  // 立即应用主题（同步），不等待数据加载
+  document.documentElement.setAttribute('data-theme', settingsStore.settings.theme)
+
+  // 然后并行加载数据
   await Promise.all([
     settingsStore.loadSettings(),
     taskStore.loadTasks(),
     statsStore.loadRecords()
   ])
 
-  // 应用主题
+  // 加载连胜数据
+  timerStore.loadStreakData()
+
+  // 确保主题是最新的（可能默认值与保存的值不同）
   document.documentElement.setAttribute('data-theme', settingsStore.settings.theme)
 
   // 监听主进程通知进入/退出专注模式
@@ -42,6 +107,24 @@ onMounted(async () => {
       timerStore.setFocusModeActive(active)
     })
   }
+
+  // 注册键盘快捷键
+  window.addEventListener('keydown', handleKeydown)
+  console.log('[App] 键盘快捷键已注册')
+
+  // 初始化托盘状态
+  if (window.electronAPI) {
+    window.electronAPI.tray.updateState({
+      timeLeft: timerStore.timeLeft,
+      isRunning: timerStore.isRunning
+    })
+    console.log('[App] 托盘状态已初始化')
+  }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
+  console.log('[App] 键盘快捷键已移除')
 })
 
 // 监听主题变化
@@ -68,12 +151,19 @@ watch(() => timerStore.pomodoroCount, (newCount, oldCount) => {
 // 发送计时器状态更新到主进程
 watch([() => timerStore.timeLeft, () => timerStore.mode, () => timerStore.justCompleted, () => timerStore.currentDuration], () => {
   if (window.electronAPI) {
+    const now = Date.now()
+    console.log(`[主→专注] timeLeft:${timerStore.timeLeft} isRunning:${timerStore.isRunning} [${now}]`)
     window.electronAPI.focus.sendState({
       timeLeft: timerStore.timeLeft,
       mode: timerStore.mode,
       isRunning: timerStore.isRunning,
       justCompleted: timerStore.justCompleted,
       total: timerStore.currentDuration
+    })
+    // 更新托盘倒计时
+    window.electronAPI.tray.updateState({
+      timeLeft: timerStore.timeLeft,
+      isRunning: timerStore.isRunning
     })
   }
 })
@@ -88,8 +178,21 @@ watch(() => timerStore.isRunning, (newVal) => {
       justCompleted: timerStore.justCompleted,
       total: timerStore.currentDuration
     })
+    // 更新托盘状态
+    window.electronAPI.tray.updateState({
+      timeLeft: timerStore.timeLeft,
+      isRunning: newVal
+    })
   }
 })
+
+// 监听托盘切换计时器
+if (window.electronAPI) {
+  window.electronAPI.tray.onToggleTimer(() => {
+    console.log('[App] 收到托盘切换计时器')
+    timerStore.isRunning ? timerStore.pause() : timerStore.start()
+  })
+}
 
 // 窗口控制
 function minimizeWindow() {
@@ -99,6 +202,7 @@ function minimizeWindow() {
 }
 
 function closeWindow() {
+  console.log('[Renderer] 关闭按钮点击')
   if (window.electronAPI) {
     window.electronAPI.window.close()
   }
@@ -130,7 +234,7 @@ function closeWindow() {
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
           </svg>
         </button>
-        <SettingsPanel />
+        <SettingsPanel ref="settingsRef" />
         <button class="window-btn minimize" @click="minimizeWindow" title="最小化">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="5" y1="12" x2="19" y2="12"/>
@@ -151,8 +255,10 @@ function closeWindow() {
       <TimerControls />
       <StatsDisplay />
       <TaskList />
+      <DataManager />
     </main>
   </div>
+  <CelebrationOverlay />
 </template>
 
 <style>
@@ -168,29 +274,53 @@ function closeWindow() {
   /* Dark theme (default) */
   --bg-primary: #1a1614;
   --bg-secondary: #2d2522;
-  --bg-card: rgba(45, 37, 34, 0.8);
-  --text-primary: #f5f0e8;
-  --text-secondary: #a89f97;
-  --text-muted: #6d6560;
-  --border-color: rgba(168, 159, 151, 0.15);
+  --bg-card: rgba(45, 37, 34, 0.85);
+  --text-primary: #faf5f0;
+  --text-secondary: #c4bdb5;
+  --text-muted: #8a827a;
+  --border-color: rgba(168, 159, 151, 0.18);
   --shadow: rgba(0, 0, 0, 0.4);
 
   /* Blobs */
   --blob1-color: rgba(231, 76, 60, 0.15);
   --blob2-color: rgba(52, 152, 219, 0.08);
+
+  /* Heatmap colors */
+  --heatmap-empty: rgba(45, 37, 34, 0.3);
+  --heatmap-1: rgba(231, 76, 60, 0.25);
+  --heatmap-2: rgba(231, 76, 60, 0.45);
+  --heatmap-3: rgba(231, 76, 60, 0.65);
+  --heatmap-4: rgba(231, 76, 60, 0.85);
+  --heatmap-5: #e74c3c;
+
+  /* Check-in colors */
+  --completed-bg: rgba(39, 174, 96, 0.2);
+  --completed-color: #2ecc71;
 }
 
 [data-theme="light"] {
-  --bg-primary: #faf8f5;
+  --bg-primary: #f5f2ef;
   --bg-secondary: #ffffff;
-  --bg-card: rgba(255, 255, 255, 0.95);
-  --text-primary: #2d2420;
-  --text-secondary: #6d5f57;
-  --text-muted: #a89f97;
-  --border-color: rgba(45, 36, 32, 0.12);
-  --shadow: rgba(45, 36, 32, 0.15);
-  --blob1-color: rgba(231, 76, 60, 0.12);
-  --blob2-color: rgba(52, 152, 219, 0.08);
+  --bg-card: rgba(255, 255, 255, 0.98);
+  --text-primary: #1a1512;
+  --text-secondary: #5c524a;
+  --text-muted: #9a9088;
+  --border-color: rgba(45, 36, 32, 0.1);
+  --shadow: rgba(45, 36, 32, 0.1);
+  --blob1-color: rgba(231, 76, 60, 0.08);
+  --blob2-color: rgba(52, 152, 219, 0.05);
+
+  /* Heatmap colors - lighter for light theme */
+  --heatmap-empty: rgba(45, 36, 32, 0.1);
+  --heatmap-1: rgba(231, 76, 60, 0.2);
+  --heatmap-2: rgba(231, 76, 60, 0.35);
+  --heatmap-3: rgba(231, 76, 60, 0.5);
+  --heatmap-4: rgba(231, 76, 60, 0.7);
+  --heatmap-5: #e74c3c;
+
+  /* Check-in colors - light theme */
+  --completed-bg: #f0f9f4;
+  --completed-color: #27ae60;
 }
 
 * {
@@ -214,6 +344,8 @@ body {
   overflow: hidden;
   border-radius: 16px;
   background: var(--bg-primary);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* 自定义标题栏 */

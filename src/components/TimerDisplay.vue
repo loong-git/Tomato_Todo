@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useTimerStore } from '@/stores'
+import { useTimerStore, useSettingsStore } from '@/stores'
 
 const timerStore = useTimerStore()
+const settingsStore = useSettingsStore()
 
 const showComplete = ref(false)
+const isLastMinute = ref(false)
 
 watch(() => timerStore.justCompleted, (completed) => {
   if (completed) {
@@ -14,6 +16,11 @@ watch(() => timerStore.justCompleted, (completed) => {
       timerStore.clearJustCompleted()
     }, 2000)
   }
+})
+
+// 监听剩余时间，判断是否最后1分钟
+watch(() => timerStore.timeLeft, (timeLeft) => {
+  isLastMinute.value = timeLeft <= 60 && timeLeft > 0
 })
 
 async function openFocusMode() {
@@ -33,7 +40,14 @@ const modeColors = {
   longBreak: '#9b59b6'
 }
 
-const progressColor = computed(() => modeColors[timerStore.mode])
+// 进度环颜色：最后1分钟根据主题变色
+const progressColor = computed(() => {
+  if (isLastMinute.value) {
+    // 深色主题用橙色，浅色主题用粉红色
+    return settingsStore.settings.theme === 'dark' ? '#f39c12' : '#ff69b4'
+  }
+  return modeColors[timerStore.mode]
+})
 
 const progress = computed(() => {
   const total = timerStore.currentDuration
@@ -56,7 +70,7 @@ const strokeDashoffset = computed(() => {
       </svg>
     </button>
 
-    <svg class="progress-ring" viewBox="0 0 280 280">
+    <svg class="progress-ring" :class="{ 'last-minute': isLastMinute, 'complete': showComplete }" viewBox="0 0 280 280">
       <defs>
         <filter id="timerGlow" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="4" result="blur"/>
@@ -106,7 +120,7 @@ const strokeDashoffset = computed(() => {
     </svg>
 
     <div class="timer-content">
-      <div class="time">{{ timerStore.formattedTime }}</div>
+      <div class="time" :class="{ 'last-minute': isLastMinute, 'complete': showComplete }">{{ timerStore.formattedTime }}</div>
       <div class="mode-tag" :style="{ color: progressColor }">
         {{ timerStore.mode === 'focus' ? '专注' : timerStore.mode === 'shortBreak' ? '短休息' : '长休息' }}
       </div>
@@ -172,6 +186,45 @@ const strokeDashoffset = computed(() => {
   transition: stroke-dashoffset 0.5s ease, stroke 0.3s ease;
 }
 
+/* 最后1分钟呼吸闪烁效果 */
+.progress-ring.last-minute .ring-progress {
+  animation: pulse-glow 1s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 8px rgba(243, 156, 18, 0.6));
+    opacity: 1;
+  }
+  50% {
+    filter: drop-shadow(0 0 20px rgba(243, 156, 18, 0.9));
+    opacity: 0.85;
+  }
+}
+
+/* 完成时弹性缩放动画 */
+.progress-ring.complete {
+  animation: complete-bounce 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes complete-bounce {
+  0% {
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.08);
+  }
+  60% {
+    transform: scale(0.96);
+  }
+  80% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
 .timer-content {
   position: absolute;
   top: 50%;
@@ -188,6 +241,26 @@ const strokeDashoffset = computed(() => {
   font-variant-numeric: tabular-nums;
   letter-spacing: -1px;
   line-height: 1;
+  transition: color 0.3s ease;
+}
+
+/* 最后1分钟时间颜色变橙/珊瑚红 */
+.time.last-minute {
+  color: #f39c12;
+  animation: time-pulse 1s ease-in-out infinite;
+}
+
+.light-theme .time.last-minute {
+  color: #ff69b4;
+}
+
+.time.complete {
+  color: #4ecdc4;
+}
+
+@keyframes time-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
 .mode-tag {

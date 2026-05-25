@@ -12,6 +12,7 @@ const emit = defineEmits<{
 
 const newTaskName = ref('')
 const showArchived = ref(false)
+const showHistory = ref(false)
 const strikingTaskId = ref<string | null>(null)
 
 function getDateKey(timestamp: number): string {
@@ -33,6 +34,11 @@ function getDateKey(timestamp: number): string {
   }
 }
 
+function formatTime(timestamp: number): string {
+  const date = new Date(timestamp)
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
 interface TaskGroup {
   dateKey: string
   tasks: typeof taskStore.tasks
@@ -52,10 +58,10 @@ const activeTaskGroups = computed<TaskGroup[]>(() => {
   return Array.from(groups.entries()).map(([dateKey, tasks]) => ({ dateKey, tasks }))
 })
 
-const completedTaskGroups = computed<TaskGroup[]>(() => {
+const historyTaskGroups = computed<TaskGroup[]>(() => {
   const groups: Map<string, typeof taskStore.tasks> = new Map()
 
-  for (const task of taskStore.completedTasks) {
+  for (const task of taskStore.historyTasks) {
     const key = getDateKey(task.createdAt)
     if (!groups.has(key)) {
       groups.set(key, [])
@@ -105,38 +111,21 @@ function deleteTask(taskId: string) {
   taskStore.deleteTask(taskId)
 }
 
+function clearHistory() {
+  if (confirm('确定要清除所有历史任务吗？此操作不可恢复。')) {
+    // 删除所有历史任务（昨天及之前创建的）
+    const taskIds = taskStore.historyTasks.map(t => t.id)
+    taskIds.forEach(id => taskStore.deleteTask(id))
+    showHistory.value = false
+  }
+}
+
 function unarchiveTask(taskId: string) {
   taskStore.unarchiveTask(taskId)
 }
 
 function deleteArchivedTask(taskId: string) {
   taskStore.deleteArchivedTask(taskId)
-}
-
-async function exportAllData() {
-  if (window.electronAPI) {
-    try {
-      const data = await taskStore.exportAllData()
-      const date = new Date().toISOString().slice(0, 10)
-      const success = await window.electronAPI.dialog.saveFile(data, `tomato-todo-${date}.json`)
-      if (success) {
-        alert('数据导出成功！')
-      }
-    } catch (e) {
-      console.error('Export failed:', e)
-      alert('导出失败')
-    }
-  }
-}
-
-async function importData() {
-  if (window.electronAPI) {
-    const jsonStr = await window.electronAPI.dialog.openJsonFile()
-    if (jsonStr) {
-      const result = await taskStore.importAllData(jsonStr)
-      alert(result.message)
-    }
-  }
 }
 </script>
 
@@ -158,11 +147,6 @@ async function importData() {
       </button>
     </div>
 
-    <div class="data-actions">
-      <button class="action-btn" @click="exportAllData">导出</button>
-      <button class="action-btn" @click="importData">导入</button>
-    </div>
-
     <div class="task-groups">
       <div v-for="group in activeTaskGroups" :key="group.dateKey" class="task-group">
         <div class="date-header">{{ group.dateKey }}</div>
@@ -170,45 +154,97 @@ async function importData() {
           v-for="task in group.tasks"
           :key="task.id"
           class="task-item"
-          :class="{ active: timerStore.currentTaskIds.includes(task.id), striking: strikingTaskId === task.id }"
+          :class="{ active: timerStore.currentTaskIds.includes(task.id), striking: strikingTaskId === task.id, completed: task.isCompleted }"
           @click="selectTask(task.id)"
         >
-          <span class="task-name">{{ task.name }}</span>
+          <div class="task-main">
+            <div class="task-name-wrapper">
+              <span class="task-name">{{ task.name }}</span>
+              <span class="tooltip">任务名称: {{ task.name }}</span>
+            </div>
+            <span class="task-time">{{ formatTime(task.createdAt) }}</span>
+          </div>
           <span class="pomodoro-badge" v-if="task.completedPomodoros > 0">
             {{ task.completedPomodoros }}
           </span>
-          <button
-            v-if="strikingTaskId !== task.id"
-            class="done-btn"
-            @click.stop="toggleComplete(task.id)"
-          >完成</button>
-          <span v-else class="completing-icon">✓</span>
-          <button class="delete-btn" @click.stop="deleteTask(task.id)">×</button>
+          <template v-if="!task.isCompleted">
+            <button
+              v-if="strikingTaskId !== task.id"
+              class="done-btn"
+              @click.stop="toggleComplete(task.id)"
+            >完成</button>
+            <button class="delete-btn" @click.stop="deleteTask(task.id)">×</button>
+          </template>
         </div>
       </div>
     </div>
 
-    <div v-if="completedTaskGroups.length > 0" class="completed-section">
-      <div class="section-header" @click="showArchived = !showArchived">
-        <span>已完成</span>
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" :class="{ rotated: showArchived }">
-          <polyline points="6 9 12 15 18 9"/>
-        </svg>
-      </div>
-      <div v-if="showArchived" class="task-groups">
-        <div v-for="group in completedTaskGroups" :key="group.dateKey" class="task-group">
-          <div class="date-header completed">{{ group.dateKey }}</div>
-          <div
-            v-for="task in group.tasks"
-            :key="task.id"
-            class="task-item completed"
-          >
-            <span class="task-name">{{ task.name }}</span>
-            <span class="pomodoro-badge">{{ task.completedPomodoros }}</span>
+    <!-- 历史任务按钮 -->
+    <button v-if="historyTaskGroups.length > 0" class="history-btn" @click="showHistory = true">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+      历史任务 ({{ taskStore.historyTasks.length }})
+    </button>
+
+    <!-- 历史任务弹窗 -->
+    <Teleport to="body">
+      <div v-if="showHistory" class="history-overlay" @click.self="showHistory = false">
+        <div class="history-panel">
+          <div class="panel-header">
+            <h3>历史任务</h3>
+            <div class="header-actions">
+              <button class="clear-btn" @click="clearHistory" title="清除历史">清除</button>
+              <button class="close-btn" @click="showHistory = false">×</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <!-- 过期任务 -->
+            <template v-if="historyTaskGroups.some(g => g.tasks.some(t => !t.isCompleted))">
+              <div class="history-section-title">过期</div>
+              <div v-for="group in historyTaskGroups" :key="'expired-' + group.dateKey">
+                <template v-if="group.tasks.some(t => !t.isCompleted)">
+                  <div class="date-header">{{ group.dateKey }}</div>
+                  <div v-for="task in group.tasks.filter(t => !t.isCompleted)" :key="task.id" class="task-item expired">
+                    <div class="task-main">
+                      <div class="task-name-wrapper">
+                        <span class="task-name">{{ task.name }}</span>
+                        <span class="tooltip">任务名称: {{ task.name }}</span>
+                      </div>
+                      <span class="task-time">{{ formatTime(task.createdAt) }}</span>
+                    </div>
+                    <span class="expired-badge">过期</span>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <!-- 已完成任务 -->
+            <template v-if="historyTaskGroups.some(g => g.tasks.some(t => t.isCompleted))">
+              <div class="history-section-title">已完成</div>
+              <div v-for="group in historyTaskGroups" :key="'completed-' + group.dateKey">
+                <template v-if="group.tasks.some(t => t.isCompleted)">
+                  <div class="date-header">{{ group.dateKey }}</div>
+                  <div v-for="task in group.tasks.filter(t => t.isCompleted)" :key="task.id" class="task-item completed">
+                    <div class="task-main">
+                      <div class="task-name-wrapper">
+                        <span class="task-name">{{ task.name }}</span>
+                        <span class="tooltip">任务名称: {{ task.name }}</span>
+                      </div>
+                      <span class="task-time">{{ formatTime(task.createdAt) }}</span>
+                    </div>
+                    <span class="pomodoro-badge" v-if="task.completedPomodoros > 0">
+                      {{ task.completedPomodoros }}
+                    </span>
+                  </div>
+                </template>
+              </div>
+            </template>
           </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <div v-if="taskStore.archivedTasks.length > 0" class="archived-section">
       <div class="section-header" @click="showArchived = !showArchived">
@@ -366,7 +402,7 @@ async function importData() {
   left: 16px;
   right: 16px;
   top: 50%;
-  height: 2px;
+  height: 3px;
   background: var(--tomato);
   border-radius: 1px;
   transform: translateY(-50%);
@@ -416,19 +452,93 @@ async function importData() {
 }
 
 .task-name {
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
   font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.task-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-name-wrapper {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.task-name-wrapper .tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.9);
+  padding: 10px 16px;
+  background: linear-gradient(135deg, var(--tomato) 0%, var(--tomato-dark) 100%);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  z-index: 100;
+  box-shadow:
+    0 4px 20px rgba(231, 76, 60, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.15) inset;
+  margin-bottom: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.task-name-wrapper .tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 8px solid transparent;
+  border-top-color: var(--tomato-dark);
+}
+
+.task-name-wrapper:hover .tooltip {
+  display: block;
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+/* 浅色主题适配 */
+[data-theme="light"] .task-name-wrapper .tooltip {
+  background: linear-gradient(135deg, #d64541 0%, #c0392b 100%);
+  box-shadow:
+    0 6px 24px rgba(192, 57, 43, 0.4),
+    0 0 0 2px rgba(255, 255, 255, 0.8) inset,
+    0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .task-name-wrapper .tooltip::after {
+  border-top-color: #c0392b;
+}
+
+.task-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .task-item.completed .task-name {
   text-decoration: line-through;
-  text-decoration-color: var(--text-muted);
-  text-decoration-thickness: 2px;
+  text-decoration-color: var(--text-secondary);
+  text-decoration-thickness: 4px;
   color: var(--text-muted);
+  opacity: 0.85;
 }
 
 .pomodoro-badge {
@@ -546,5 +656,155 @@ async function importData() {
 
 .task-item.archived {
   opacity: 0.5;
+}
+
+/* 历史任务按钮 */
+.history-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 12px;
+  margin-top: 8px;
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.history-btn:hover {
+  background: var(--bg-card);
+  border-color: var(--tomato);
+  color: var(--text-primary);
+}
+
+/* 历史任务弹窗 */
+.history-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.2s ease;
+}
+
+.history-panel {
+  width: 360px;
+  max-height: 70vh;
+  background: var(--bg-card);
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  animation: slideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.panel-header h3 {
+  font-family: 'DM Serif Display', serif;
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.clear-btn {
+  padding: 4px 10px;
+  border: none;
+  background: rgba(231, 76, 60, 0.15);
+  border-radius: 6px;
+  color: #e74c3c;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.clear-btn:hover {
+  background: rgba(231, 76, 60, 0.3);
+}
+
+.close-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background: rgba(231, 76, 60, 0.2);
+  color: #e74c3c;
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.expired-badge {
+  padding: 3px 8px;
+  background: rgba(231, 76, 60, 0.15);
+  border-radius: 6px;
+  color: #e74c3c;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.history-section-title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 16px 0 8px 0;
+}
+
+.history-section-title:first-child {
+  margin-top: 0;
+}
+
+.task-item.expired {
+  border-left: 3px solid #e74c3c;
+  opacity: 0.6;
+}
+
+.task-item.expired .task-name {
+  color: #888;
+}
+
+.task-item.expired .task-time {
+  color: #666;
 }
 </style>

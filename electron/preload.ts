@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dialog: {
     openFile: () => ipcRenderer.invoke('dialog:openFile'),
     saveFile: (data: string, defaultName: string) => ipcRenderer.invoke('dialog:saveFile', data, defaultName),
+    saveCSV: (data: string, defaultName: string) => ipcRenderer.invoke('dialog:saveCSV', data, defaultName),
     openJsonFile: () => ipcRenderer.invoke('dialog:openJsonFile')
   },
   audio: {
@@ -41,6 +42,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
-    close: () => ipcRenderer.send('window:close')
+    close: () => ipcRenderer.send('window:close'),
+    bringToFront: () => ipcRenderer.send('window:bringToFront')
+  },
+  tray: {
+    updateState: (data: { timeLeft: number; isRunning: boolean }) => {
+      ipcRenderer.send('tray:updateState', data)
+    },
+    onToggleTimer: (callback: () => void) => {
+      ipcRenderer.on('tray:toggleTimer', () => callback())
+    }
   }
 })

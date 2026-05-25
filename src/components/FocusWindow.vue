@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 
 const timeLeft = ref(25 * 60)
 const mode = ref('focus')
@@ -7,8 +7,8 @@ const total = ref(25 * 60)
 const showComplete = ref(false)
 const isRunning = ref(false)
 const isDark = ref(true)
-
-let timer: ReturnType<typeof setInterval> | null = null
+const isLastMinute = ref(false)
+const isLoaded = ref(false) // 骨架屏状态
 
 const modeColors: Record<string, string> = {
   focus: '#e74c3c',
@@ -16,7 +16,13 @@ const modeColors: Record<string, string> = {
   longBreak: '#9b59b6'
 }
 
-const progressColor = computed(() => modeColors[mode.value] || modeColors.focus)
+// 进度环颜色：最后1分钟根据主题变色
+const progressColor = computed(() => {
+  if (isLastMinute.value) {
+    return isDark.value ? '#f39c12' : '#ff69b4'
+  }
+  return modeColors[mode.value] || modeColors.focus
+})
 
 const progress = computed(() => {
   if (total.value === 0) return 0
@@ -34,33 +40,7 @@ const formattedTime = computed(() => {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 })
 
-function tick() {
-  if (timeLeft.value > 0) {
-    timeLeft.value--
-  }
-  if (timeLeft.value === 0 && isRunning.value) {
-    isRunning.value = false
-    stopTimer()
-    showComplete.value = true
-  }
-}
-
-function startTimer() {
-  if (timer) clearInterval(timer)
-  timer = setInterval(tick, 1000)
-  isRunning.value = true
-}
-
-function stopTimer() {
-  if (timer) {
-    clearInterval(timer)
-    timer = null
-  }
-  isRunning.value = false
-}
-
 async function closeFocus() {
-  stopTimer()
   if (window.electronAPI) {
     await window.electronAPI.focus.close()
   }
@@ -95,46 +75,59 @@ onMounted(async () => {
     }
   })
 
-  const initData = await window.electronAPI.focus.getInitData()
-  timeLeft.value = initData.timeLeft
-  mode.value = initData.mode
-  total.value = initData.total
+  // 专注窗口不运行自己的timer，完全依赖主窗口通过IPC发送的状态
+  if (window.electronAPI) {
+    // 先设置监听器
+    window.electronAPI.focus.onStateUpdate((data) => {
+      timeLeft.value = data.timeLeft
+      mode.value = data.mode
+      total.value = data.total
+      isRunning.value = data.isRunning
+      isLastMinute.value = data.timeLeft <= 60 && data.timeLeft > 0
 
-  if (initData.isRunning) {
-    startTimer()
+      // 处理完成状态
+      if (data.justCompleted) {
+        showComplete.value = true
+      }
+    })
+
+    // 等监听器设置完成后再获取初始状态
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    // 获取初始状态
+    const initData = await window.electronAPI.focus.getInitData()
+    timeLeft.value = initData.timeLeft
+    mode.value = initData.mode
+    total.value = initData.total
+    isRunning.value = initData.isRunning
+    isLastMinute.value = initData.timeLeft <= 60 && initData.timeLeft > 0
+    isLoaded.value = true
   }
-
-  window.electronAPI.focus.onStateUpdate((data) => {
-    mode.value = data.mode
-    total.value = data.total
-
-    if (data.justCompleted && timeLeft.value > 0) {
-      timeLeft.value = 0
-      stopTimer()
-      showComplete.value = true
-    }
-  })
-})
-
-onUnmounted(() => {
-  stopTimer()
 })
 </script>
 
 <template>
   <div class="focus-window" :class="{ 'light-theme': !isDark }">
+    <!-- 骨架屏 -->
+    <div v-if="!isLoaded" class="skeleton-screen">
+      <div class="skeleton-ring"></div>
+      <div class="skeleton-time"></div>
+      <div class="skeleton-mode"></div>
+    </div>
+
     <!-- 装饰光晕 -->
-    <div class="glow glow-1"></div>
-    <div class="glow glow-2"></div>
+    <div v-if="isLoaded" class="glow glow-1"></div>
+    <div v-if="isLoaded" class="glow glow-2"></div>
 
-    <button class="close-btn" @click.stop="closeFocus" title="返回主窗口">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-        <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
+    <template v-if="isLoaded">
+      <button class="close-btn" @click.stop="closeFocus" title="返回主窗口">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
 
-    <div class="timer-container">
-      <svg class="progress-ring" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+      <div class="timer-container">
+      <svg class="progress-ring" :class="{ 'last-minute': isLastMinute, 'complete': showComplete }" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
         <!-- 外圈光晕 -->
         <defs>
           <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
@@ -183,20 +176,21 @@ onUnmounted(() => {
       </svg>
 
       <div class="time-display">
-        <span class="time">{{ formattedTime }}</span>
+        <span class="time" :class="{ 'last-minute': isLastMinute, 'complete': showComplete }">{{ formattedTime }}</span>
         <span class="mode-label">{{ mode === 'focus' ? '专注' : mode === 'shortBreak' ? '短休息' : '长休息' }}</span>
       </div>
-    </div>
 
-    <div v-if="showComplete" class="complete-overlay">
-      <div class="complete-content">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke-linecap="round"/>
-          <polyline points="22 4 12 14.01 9 11.01" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span>倒计时完成</span>
+      <div v-if="showComplete" class="complete-overlay">
+        <div class="complete-content">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke-linecap="round"/>
+            <polyline points="22 4 12 14.01 9 11.01" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>倒计时完成</span>
+        </div>
       </div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -237,6 +231,71 @@ onUnmounted(() => {
   user-select: none;
   -webkit-user-select: none;
   -webkit-app-region: drag;
+}
+
+/* 骨架屏 */
+.skeleton-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3vmin;
+  z-index: 5;
+}
+
+.skeleton-ring {
+  width: 80vmin;
+  height: 80vmin;
+  min-width: 120px;
+  min-height: 120px;
+  border-radius: 50%;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.03) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.skeleton-time {
+  width: 40vmin;
+  height: 12vmin;
+  min-width: 80px;
+  min-height: 30px;
+  border-radius: 8px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite 0.2s;
+}
+
+.skeleton-mode {
+  width: 20vmin;
+  height: 4vmin;
+  min-width: 50px;
+  min-height: 15px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.03) 0%,
+    rgba(255, 255, 255, 0.06) 50%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite 0.4s;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 /* 装饰光晕 - 使用 vmin 实现等比例缩放 */
@@ -330,6 +389,35 @@ onUnmounted(() => {
   transition: stroke-dashoffset 0.3s ease-out, stroke 0.3s ease;
 }
 
+/* 最后1分钟呼吸闪烁效果 */
+.progress-ring.last-minute .ring-progress {
+  animation: pulse-glow 1s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 8px rgba(243, 156, 18, 0.6));
+    opacity: 1;
+  }
+  50% {
+    filter: drop-shadow(0 0 20px rgba(243, 156, 18, 0.9));
+    opacity: 0.85;
+  }
+}
+
+/* 完成时弹性缩放动画 */
+.progress-ring.complete {
+  animation: complete-bounce 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes complete-bounce {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.08); }
+  60% { transform: scale(0.96); }
+  80% { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+
 .ring-dot {
   animation: rotate-dot 20s linear infinite;
   transform-origin: 50px 50px;
@@ -360,6 +448,26 @@ onUnmounted(() => {
   letter-spacing: 0.5vmin;
   text-shadow: 0 2px 15px rgba(0, 0, 0, 0.3);
   line-height: 1;
+  transition: color 0.3s ease;
+}
+
+/* 最后1分钟时间颜色变橙/珊瑚红 */
+.time.last-minute {
+  color: #f39c12;
+  animation: time-pulse 1s ease-in-out infinite;
+}
+
+.light-theme .time.last-minute {
+  color: #ff69b4;
+}
+
+.time.complete {
+  color: #4ecdc4;
+}
+
+@keyframes time-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
 .mode-label {
