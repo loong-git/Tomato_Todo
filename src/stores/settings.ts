@@ -8,6 +8,7 @@ const defaultSettings: Settings = {
   longBreakDuration: 15,
   longBreakInterval: 4,
   dailyGoal: 8,
+  dailyHourGoal: 4,
   soundEnabled: true,
   notificationEnabled: true,
   soundType: 'bell',

@@ -186,22 +186,6 @@ const strokeDashoffset = computed(() => {
   transition: stroke-dashoffset 0.5s ease, stroke 0.3s ease;
 }
 
-/* 最后1分钟呼吸闪烁效果 */
-.progress-ring.last-minute .ring-progress {
-  animation: pulse-glow 1s ease-in-out infinite;
-}
-
-@keyframes pulse-glow {
-  0%, 100% {
-    filter: drop-shadow(0 0 8px rgba(243, 156, 18, 0.6));
-    opacity: 1;
-  }
-  50% {
-    filter: drop-shadow(0 0 20px rgba(243, 156, 18, 0.9));
-    opacity: 0.85;
-  }
-}
-
 /* 完成时弹性缩放动画 */
 .progress-ring.complete {
   animation: complete-bounce 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
@@ -247,7 +231,6 @@ const strokeDashoffset = computed(() => {
 /* 最后1分钟时间颜色变橙/珊瑚红 */
 .time.last-minute {
   color: #f39c12;
-  animation: time-pulse 1s ease-in-out infinite;
 }
 
 .light-theme .time.last-minute {
@@ -256,11 +239,6 @@ const strokeDashoffset = computed(() => {
 
 .time.complete {
   color: #4ecdc4;
-}
-
-@keyframes time-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
 }
 
 .mode-tag {

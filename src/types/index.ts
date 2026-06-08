@@ -24,6 +24,7 @@ export interface Settings {
   longBreakDuration: number
   longBreakInterval: number
   dailyGoal: number
+  dailyHourGoal: number
   soundEnabled: boolean
   notificationEnabled: boolean
   soundType: SoundType

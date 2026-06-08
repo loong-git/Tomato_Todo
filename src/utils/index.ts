@@ -161,68 +161,92 @@ export function playPresetSound(type: SoundType): void {
   }
 }
 
-export function playCelebrationSound(): void {
+// 复用 AudioContext 避免每次创建延迟
+let sharedCtx: AudioContext | null = null
+
+function getAudioContext(): AudioContext | null {
   try {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext
-    if (!AudioContext) return
-
-    const ctx = new AudioContext()
-
-    // 笔划过纸面音效：带通滤波噪音 + 摩擦感
-    const duration = 0.5
-    const sampleRate = ctx.sampleRate
-    const bufferSize = Math.floor(sampleRate * duration)
-    const buffer = ctx.createBuffer(1, bufferSize, sampleRate)
-    const data = buffer.getChannelData(0)
-
-    // 生成带节奏感的噪音（模拟笔在纸上划过的不规则摩擦）
-    for (let i = 0; i < bufferSize; i++) {
-      const t = i / sampleRate
-      // 基础白噪音
-      let sample = (Math.random() * 2 - 1) * 0.6
-      // 添加低频脉冲模拟笔尖摩擦节奏
-      const pulse = Math.sin(t * 180 + Math.sin(t * 40) * 0.5) * 0.3
-      sample += pulse * (Math.random() * 0.7 + 0.3)
-      // 幅度包络：渐变 + 快速衰减
-      const attack = Math.min(t / 0.04, 1)
-      const release = Math.max(0, 1 - (t - 0.3) / 0.2)
-      const envelope = attack * release
-      data[i] = sample * envelope
+    if (!AudioContext) return null
+    if (!sharedCtx) {
+      sharedCtx = new AudioContext()
+      // 立即尝试 resume，异步
+      if (sharedCtx.state === 'suspended') {
+        sharedCtx.resume().catch(() => {})
+      }
     }
-
-    // 噪音源
-    const noiseSource = ctx.createBufferSource()
-    noiseSource.buffer = buffer
-
-    // 带通滤波器（模拟纸张摩擦的频率范围）
-    const bandpass = ctx.createBiquadFilter()
-    bandpass.type = 'bandpass'
-    bandpass.frequency.value = 2200
-    bandpass.Q.value = 1.2
-
-    // 高频增强滤波器（增加"沙沙"质感）
-    const highShelf = ctx.createBiquadFilter()
-    highShelf.type = 'highshelf'
-    highShelf.frequency.value = 4000
-    highShelf.gain.value = 6
-
-    // 主音量
-    const gainNode = ctx.createGain()
-    gainNode.gain.value = 0.25
-
-    noiseSource.connect(bandpass)
-    bandpass.connect(highShelf)
-    highShelf.connect(gainNode)
-    gainNode.connect(ctx.destination)
-
-    noiseSource.start(ctx.currentTime)
-    noiseSource.stop(ctx.currentTime + duration + 0.05)
-
-    // 关闭 AudioContext
-    setTimeout(() => {
-      ctx.close()
-    }, 1000)
+    return sharedCtx
   } catch (e) {
-    console.warn('Celebration sound not supported:', e)
+    return null
   }
+}
+
+export function playCelebrationSound(): void {
+  const ctx = getAudioContext()
+  if (!ctx) return
+  const now = ctx.currentTime
+
+  // 1. 笔触沙沙声 - 笔尖划过纸面（持续 0.5s 匹配划线动画）
+  const duration = 0.5
+  const sampleRate = ctx.sampleRate
+  const bufferSize = Math.floor(sampleRate * duration)
+  const buffer = ctx.createBuffer(1, bufferSize, sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = (Math.random() * 2 - 1) * 0.5
+  }
+  const noiseSource = ctx.createBufferSource()
+  noiseSource.buffer = buffer
+  const highpass = ctx.createBiquadFilter()
+  highpass.type = 'highpass'
+  highpass.frequency.value = 2000
+  highpass.Q.value = 1
+  const noiseGain = ctx.createGain()
+  noiseGain.gain.setValueAtTime(0, now)
+  noiseGain.gain.linearRampToValueAtTime(0.25, now + 0.02)
+  noiseGain.gain.linearRampToValueAtTime(0.25, now + duration - 0.1)
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, now + duration)
+  noiseSource.connect(highpass)
+  highpass.connect(noiseGain)
+  noiseGain.connect(ctx.destination)
+  noiseSource.start(now)
+  noiseSource.stop(now + duration + 0.05)
+
+  // 2. 完成"叮咚" - 划线结束后的清脆提示（钢琴/风铃质感）
+  const playNote = (startOffset: number, baseFreq: number) => {
+    const startTime = now + startOffset
+    // 真实钢琴/风铃的谐波结构：基频 + 整数倍泛音
+    const partials = [
+      { ratio: 1, amp: 0.30, decay: 0.6 },   // 基频
+      { ratio: 2, amp: 0.18, decay: 0.35 },  // 2 倍频
+      { ratio: 3, amp: 0.12, decay: 0.20 },  // 3 倍频
+      { ratio: 4, amp: 0.08, decay: 0.12 },  // 4 倍频 - 决定"光泽"
+      { ratio: 5, amp: 0.05, decay: 0.08 }   // 5 倍频 - 决定"清脆"
+    ]
+
+    partials.forEach(p => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(baseFreq * p.ratio, startTime)
+
+      // 起音 3ms 内到峰值（钢琴击键感）
+      gain.gain.setValueAtTime(0, startTime)
+      gain.gain.linearRampToValueAtTime(p.amp, startTime + 0.003)
+      // 指数衰减到 0
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + p.decay)
+
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(startTime)
+      osc.stop(startTime + p.decay + 0.05)
+    })
+  }
+
+  // 第一个音：C6 (1047Hz) "叮" - 划线结束瞬间
+  playNote(duration + 0.05, 1047)
+
+  // 第二个音：G6 (1568Hz) "咚" - 完结提示
+  playNote(duration + 0.18, 1568)
 }

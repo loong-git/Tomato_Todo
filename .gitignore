@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-electron/
+release/
+
+# Logs
+*.log
+log.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude
+.claude/
+
+# Temp files
+temp-check/
+*.tmp
+*.bak
+
+# Icons
+icon.ico
+icon.png
+icon.svg
+icon-preview.html
+generate-icon.js
+extract.ps1
+
+# Misc
+*.md !README.md
+*.jpg
+main.js

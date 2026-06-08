@@ -202,6 +202,9 @@ export const useTimerStore = defineStore('timer', () => {
         console.log('[Timer] 新的一天，连胜重置为 1')
       }
       saveStreakData()
+    } else if (mode.value === 'longBreak') {
+      // 长休息完成后重置番茄计数
+      pomodoroCount.value = 0
     }
     playSound()
     showNotification()
@@ -236,8 +239,10 @@ export const useTimerStore = defineStore('timer', () => {
     const index = currentTaskIds.value.indexOf(taskId)
     if (index !== -1) {
       currentTaskIds.value.splice(index, 1)
+      console.log('[Timer] 任务移出选中:', taskId)
     } else {
       currentTaskIds.value.push(taskId)
+      console.log('[Timer] 任务加入选中:', taskId)
     }
   }
 

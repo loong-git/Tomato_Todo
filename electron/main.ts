@@ -3,6 +3,9 @@ import { join } from 'path'
 import { readFileSync, writeFileSync, appendFileSync } from 'fs'
 import Store from 'electron-store'
 
+// 设置 Windows 通知显示的应用名称
+app.setAppUserModelId('番茄TODO')
+
 // 设置 Electron 用户数据目录到项目根目录的 data 文件夹
 app.setPath('userData', join(__dirname, '../../data'))
 

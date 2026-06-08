@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Task } from '@/types'
 import { generateId } from '@/utils'
+import { useStatsStore } from './stats'
 
 export const useTaskStore = defineStore('task', () => {
   const tasks = ref<Task[]>([])
@@ -62,9 +63,12 @@ export const useTaskStore = defineStore('task', () => {
   }
 
   function deleteTask(id: string) {
-    const index = tasks.value.findIndex(t => t.id === id)
-    if (index !== -1) {
-      tasks.value.splice(index, 1)
+    const task = tasks.value.find(t => t.id === id)
+    if (task) {
+      // 同步清理该任务的 records 和统计
+      const statsStore = useStatsStore()
+      statsStore.removeRecordsByTaskId(task.id)
+      tasks.value.splice(tasks.value.indexOf(task), 1)
       debouncedSave()
     }
   }
@@ -114,6 +118,8 @@ export const useTaskStore = defineStore('task', () => {
   function deleteArchivedTask(id: string) {
     const task = tasks.value.find(t => t.id === id)
     if (task && task.archivedAt) {
+      const statsStore = useStatsStore()
+      statsStore.removeRecordsByTaskId(task.id)
       tasks.value.splice(tasks.value.indexOf(task), 1)
       debouncedSave()
     }
@@ -186,23 +192,103 @@ export const useTaskStore = defineStore('task', () => {
     const weekStart = todayStart - 7 * 24 * 60 * 60 * 1000
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
     const yearStart = new Date(now.getFullYear(), 0, 1).getTime()
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
 
     const todayRecords = statsStore.records.filter(r => r.completedAt >= todayStart && r.type === 'focus')
     const weekRecords = statsStore.records.filter(r => r.completedAt >= weekStart && r.type === 'focus')
     const monthRecords = statsStore.records.filter(r => r.completedAt >= monthStart && r.type === 'focus')
     const yearRecords = statsStore.records.filter(r => r.completedAt >= yearStart && r.type === 'focus')
+    const last30Records = statsStore.records.filter(r => r.completedAt >= thirtyDaysAgo && r.type === 'focus')
+
+    const sumMinutes = (arr: typeof statsStore.records) => Math.round(arr.reduce((s, r) => s + r.duration, 0) / 60)
+    const sumHours = (arr: typeof statsStore.records) => (arr.reduce((s, r) => s + r.duration, 0) / 3600).toFixed(1)
 
     lines.push(`今日专注次数,${todayRecords.length}`)
-    lines.push(`今日专注分钟,${Math.round(todayRecords.reduce((sum, r) => sum + r.duration, 0) / 60)}`)
+    lines.push(`今日专注分钟,${sumMinutes(todayRecords)}`)
     lines.push(`本周专注次数,${weekRecords.length}`)
-    lines.push(`本周专注分钟,${Math.round(weekRecords.reduce((sum, r) => sum + r.duration, 0) / 60)}`)
+    lines.push(`本周专注分钟,${sumMinutes(weekRecords)}`)
     lines.push(`本月专注次数,${monthRecords.length}`)
-    lines.push(`本月专注分钟,${Math.round(monthRecords.reduce((sum, r) => sum + r.duration, 0) / 60)}`)
-    lines.push(`本年专注次数,${yearRecords.length}`)
-    lines.push(`本年专注分钟,${Math.round(yearRecords.reduce((sum, r) => sum + r.duration, 0) / 60)}`)
+    lines.push(`本月专注分钟,${sumMinutes(monthRecords)}`)
+
+    // 年度完成 - 列出所有有数据的年份
+    const yearStatsMap = statsStore.yearStats
+    const yearKeys = Object.keys(yearStatsMap).map(Number).sort((a, b) => b - a)
+    if (yearKeys.length > 0) {
+      lines.push('')
+      lines.push('=== 年度完成（所有年份）===')
+      lines.push('年份,完成番茄,累计小时,累计分钟')
+      for (const y of yearKeys) {
+        const ys = yearStatsMap[y]
+        lines.push(`${y}年,${ys.count},${(ys.seconds / 3600).toFixed(2)},${Math.round(ys.seconds / 60)}`)
+      }
+    }
+
+    // 累计详细数据 - 改用 lifetimeStats / yearStats
+    const lifetime = statsStore.lifetimeStats
+    const year = now.getFullYear()
+    const yStats = statsStore.yearStats[year] || { count: 0, seconds: 0 }
+
+    lines.push('')
+    lines.push('=== 累计详细数据 ===')
+    lines.push(`累计完成番茄,${lifetime.totalCount}`)
+    lines.push(`累计小时数,${(lifetime.totalSeconds / 3600).toFixed(2)}`)
+    lines.push(`累计分钟数,${Math.round(lifetime.totalSeconds / 60)}`)
+    lines.push(`${year}年完成番茄,${yStats.count}`)
+    lines.push(`${year}年累计小时,${(yStats.seconds / 3600).toFixed(2)}`)
+    lines.push(`${year}年累计分钟,${Math.round(yStats.seconds / 60)}`)
+    lines.push(`30天完成番茄,${last30Records.length}`)
+    lines.push(`30天累计小时,${sumHours(last30Records)}`)
+    lines.push(`30天累计分钟,${sumMinutes(last30Records)}`)
+
+    // 计算连续记录天数
+    const focusRecords = statsStore.records.filter(r => r.type === 'focus')
+    const focusDays = new Set<string>()
+    focusRecords.forEach(r => {
+      const d = new Date(r.completedAt)
+      d.setHours(0, 0, 0, 0)
+      focusDays.add(d.getTime().toString())
+    })
+    const sortedDays = Array.from(focusDays).map(Number).sort((a, b) => b - a)
+    let streak = 0
+    const todayTs = new Date().setHours(0, 0, 0, 0)
+    let checkDate = sortedDays[0] === todayTs ? todayTs : todayTs - 86400000
+    for (const dayTs of sortedDays) {
+      if (dayTs === checkDate) {
+        streak++
+        checkDate -= 86400000
+      } else if (dayTs < checkDate) {
+        break
+      }
+    }
+    lines.push(`连续记录,${streak}`)
+
+    // 最高连续记录
+    const sortedAsc = Array.from(focusDays).map(Number).sort((a, b) => a - b)
+    let maxStreak = 0
+    let current = 1
+    for (let i = 1; i < sortedAsc.length; i++) {
+      if (sortedAsc[i] - sortedAsc[i - 1] === 86400000) {
+        current++
+        maxStreak = Math.max(maxStreak, current)
+      } else {
+        current = 1
+      }
+    }
+    maxStreak = Math.max(maxStreak, current)
+    lines.push(`最高连续记录,${maxStreak}`)
+
     lines.push(`总任务数,${tasks.value.length}`)
     lines.push(`已完成任务,${tasks.value.filter(t => t.isCompleted).length}`)
-    lines.push(`进行中任务,${tasks.value.filter(t => !t.isCompleted && !t.archivedAt).length}`)
+
+    // 任务状态分类：今天未完成 = 进行中；昨天及之前未完成 = 过期
+    const todayStartForTasks = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const inProgressTasks = tasks.value.filter(t => !t.isCompleted && !t.archivedAt && t.createdAt >= todayStartForTasks)
+    const expiredTasks = tasks.value.filter(t => !t.isCompleted && !t.archivedAt && t.createdAt < todayStartForTasks)
+    const archivedCount = tasks.value.filter(t => t.archivedAt).length
+
+    lines.push(`进行中任务,${inProgressTasks.length}`)
+    lines.push(`过期任务,${expiredTasks.length}`)
+    lines.push(`已归档任务,${archivedCount}`)
 
     return lines.join('\n')
   }

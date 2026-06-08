@@ -140,6 +140,18 @@ defineExpose({ open, close })
             </div>
           </div>
 
+          <div class="setting-item">
+            <div class="setting-label">
+              <span class="label-text">每日目标小时数</span>
+              <span class="label-hint">小时</span>
+            </div>
+            <div class="setting-control">
+              <button class="num-btn" @click="localSettings.dailyHourGoal = Math.max(0, +(localSettings.dailyHourGoal - 0.5).toFixed(1))">-</button>
+              <input type="number" class="num-input" v-model.number="localSettings.dailyHourGoal" min="0" max="12" step="0.5" />
+              <button class="num-btn" @click="localSettings.dailyHourGoal = Math.min(12, +(localSettings.dailyHourGoal + 0.5).toFixed(1))">+</button>
+            </div>
+          </div>
+
           <div class="setting-item toggle-item">
             <div class="setting-label">
               <span class="label-text">声音提醒</span>
@@ -331,6 +343,71 @@ defineExpose({ open, close })
   flex: 1;
   overflow-y: auto;
   padding: 16px 24px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(231, 76, 60, 0.25) transparent;
+  transition: scrollbar-color 0.3s ease;
+}
+
+.modal-body:hover,
+.modal-body:focus-within,
+.modal-body.is-scrolling {
+  scrollbar-color: rgba(231, 76, 60, 0.55) transparent;
+}
+
+.modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modal-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  margin: 4px 0;
+  border-radius: 3px;
+}
+
+.modal-body::-webkit-scrollbar-thumb {
+  background: rgba(231, 76, 60, 0.25);
+  border-radius: 3px;
+  transition: background 0.3s ease;
+}
+
+.modal-body:hover::-webkit-scrollbar-thumb,
+.modal-body:focus-within::-webkit-scrollbar-thumb,
+.modal-body.is-scrolling::-webkit-scrollbar-thumb {
+  background: rgba(231, 76, 60, 0.55);
+}
+
+.modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(231, 76, 60, 0.75) !important;
+}
+
+/* 浅色主题 */
+[data-theme="light"] .modal-body {
+  scrollbar-color: rgba(231, 76, 60, 0.2) transparent;
+}
+
+[data-theme="light"] .modal-body:hover,
+[data-theme="light"] .modal-body:focus-within,
+[data-theme="light"] .modal-body.is-scrolling {
+  scrollbar-color: rgba(231, 76, 60, 0.4) transparent;
+}
+
+[data-theme="light"] .modal-body::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .modal-body::-webkit-scrollbar-thumb {
+  background: rgba(231, 76, 60, 0.2);
+}
+
+[data-theme="light"] .modal-body:hover::-webkit-scrollbar-thumb,
+[data-theme="light"] .modal-body:focus-within::-webkit-scrollbar-thumb,
+[data-theme="light"] .modal-body.is-scrolling::-webkit-scrollbar-thumb {
+  background: rgba(231, 76, 60, 0.4);
+}
+
+[data-theme="light"] .modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(231, 76, 60, 0.6) !important;
 }
 
 .setting-item {

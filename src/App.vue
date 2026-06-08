@@ -84,7 +84,48 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+async function injectTestData() {
+  await statsStore.injectYesterdayData()
+  await statsStore.injectHistoryTasks()
+  console.log('[Test] 测试数据已注入')
+}
+
+async function clearAllData() {
+  if (!confirm('确定要清空所有任务、记录和统计数据吗？此操作不可恢复！')) return
+
+  // 清空内存
+  taskStore.tasks = []
+  statsStore.records = []
+  statsStore.lifetimeStats = { totalCount: 0, totalSeconds: 0 }
+  statsStore.yearStats = {}
+
+  // 立即持久化
+  if (window.electronAPI) {
+    await window.electronAPI.store.set('tasks', [])
+    await window.electronAPI.store.set('records', [])
+    await window.electronAPI.store.set('lifetimeStats', { totalCount: 0, totalSeconds: 0 })
+    await window.electronAPI.store.set('yearStats', {})
+  }
+
+  console.log('[Test] 全部数据已清零')
+  alert('已清空所有数据，请重新测试')
+}
+
 onMounted(async () => {
+  // 预热 AudioContext - 避免首次播放音效延迟
+  try {
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext
+    if (AudioContext) {
+      const ctx = new AudioContext()
+      if (ctx.state === 'suspended') {
+        await ctx.resume()
+      }
+      console.log('[Audio] AudioContext 已预热:', ctx.state)
+    }
+  } catch (e) {
+    console.warn('[Audio] 预热失败:', e)
+  }
+
   // 立即应用主题（同步），不等待数据加载
   document.documentElement.setAttribute('data-theme', settingsStore.settings.theme)
 
@@ -139,8 +180,10 @@ watch(() => timerStore.pomodoroCount, (newCount, oldCount) => {
         taskStore.incrementPomodoro(taskId)
       })
     }
+    // 记录关联到第一个选中的任务（这样删除任务时能找到 records）
+    const taskId = timerStore.currentTaskIds[0] || ''
     statsStore.addRecord({
-      taskId: '',
+      taskId,
       type: 'focus',
       duration: settingsStore.settings.focusDuration * 60,
       completedAt: Date.now()
@@ -192,6 +235,21 @@ if (window.electronAPI) {
     console.log('[App] 收到托盘切换计时器')
     timerStore.isRunning ? timerStore.pause() : timerStore.start()
   })
+}
+
+// 滚动时显示滚动条，停止后渐隐
+let scrollTimer: ReturnType<typeof setTimeout> | null = null
+const isScrolling = ref(false)
+
+function onMainScroll(e: Event) {
+  isScrolling.value = true
+  const el = e.currentTarget as HTMLElement
+  el.classList.add('scrolling')
+  if (scrollTimer) clearTimeout(scrollTimer)
+  scrollTimer = setTimeout(() => {
+    isScrolling.value = false
+    el.classList.remove('scrolling')
+  }, 800)
 }
 
 // 窗口控制
@@ -249,17 +307,53 @@ function closeWindow() {
       </div>
     </header>
 
-    <main>
-      <TimerDisplay />
-      <ModeSelector />
-      <TimerControls />
-      <StatsDisplay />
-      <TaskList />
-      <DataManager />
+    <main
+      @scroll.passive="onMainScroll"
+    >
+      <div class="main-content">
+        <TimerDisplay />
+        <ModeSelector />
+        <TimerControls />
+        <StatsDisplay />
+        <TaskList />
+        <DataManager />
+      </div>
     </main>
   </div>
   <CelebrationOverlay />
+
+  <!-- 临时测试面板 -->
+  <div class="dev-test-panel">
+    <button class="dev-btn" @click="injectTestData" title="注入测试数据">📊</button>
+    <button class="dev-btn reset-btn" @click="clearAllData" title="清空所有数据" style="background:linear-gradient(135deg,#7f8c8d,#34495e);margin-top:8px;">🗑️</button>
+  </div>
 </template>
+
+<style scoped>
+.dev-test-panel {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+}
+
+.dev-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
+  color: white;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease;
+}
+
+.dev-btn:hover {
+  transform: scale(1.1);
+}
+</style>
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Serif+Display&display=swap');
@@ -296,6 +390,10 @@ function closeWindow() {
   /* Check-in colors */
   --completed-bg: rgba(39, 174, 96, 0.2);
   --completed-color: #2ecc71;
+
+  /* Task list states (dark theme) */
+  --task-completed-bg: rgba(45, 37, 34, 0.45);
+  --task-expired-bg: rgba(45, 37, 34, 0.5);
 }
 
 [data-theme="light"] {
@@ -321,6 +419,10 @@ function closeWindow() {
   /* Check-in colors - light theme */
   --completed-bg: #f0f9f4;
   --completed-color: #27ae60;
+
+  /* Task list states (light theme) */
+  --task-completed-bg: rgba(45, 36, 32, 0.05);
+  --task-expired-bg: rgba(231, 76, 60, 0.06);
 }
 
 * {
@@ -339,13 +441,15 @@ body {
 }
 
 .app {
-  min-height: 100vh;
+  height: 100vh;
   position: relative;
   overflow: hidden;
   border-radius: 16px;
   background: var(--bg-primary);
   user-select: none;
   -webkit-user-select: none;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 自定义标题栏 */
@@ -456,48 +560,68 @@ body {
 }
 
 main {
-  max-width: 420px;
-  margin: 0 auto;
-  padding: 0 24px 40px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
   position: relative;
   z-index: 10;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-/* 自定义滚动条 - 纤细现代风格 */
-::-webkit-scrollbar {
+.main-content {
+  width: 100%;
+  max-width: 420px;
+  padding: 0 24px 40px;
+  display: flex;
+  flex-direction: column;
+}
+
+main:hover,
+main:focus-within,
+main.scrolling {
+  scrollbar-color: rgba(231, 76, 60, 0.4) transparent;
+}
+
+main::-webkit-scrollbar {
   width: 6px;
-  height: 6px;
 }
 
-::-webkit-scrollbar-track {
+main::-webkit-scrollbar-track {
   background: transparent;
   margin: 8px 0;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(231, 76, 60, 0.3);
-  border-radius: 3px;
-  transition: all 0.2s ease;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(231, 76, 60, 0.5);
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:active {
-  background: rgba(231, 76, 60, 0.7);
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-corner {
+main::-webkit-scrollbar-thumb {
   background: transparent;
+  border-radius: 3px;
+  transition: background 0.3s ease;
 }
 
-/* Firefox 滚动条 */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(231, 76, 60, 0.3) transparent;
+main:hover::-webkit-scrollbar-thumb,
+main:focus-within::-webkit-scrollbar-thumb,
+main.scrolling::-webkit-scrollbar-thumb {
+  background: rgba(231, 76, 60, 0.4);
+}
+
+main::-webkit-scrollbar-thumb:hover {
+  background: rgba(231, 76, 60, 0.6) !important;
+}
+
+main::-webkit-scrollbar-thumb:active {
+  background: rgba(231, 76, 60, 0.8) !important;
+}
+
+main::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* Settings modal styles are in SettingsPanel.vue */

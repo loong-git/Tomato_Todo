@@ -164,15 +164,6 @@ onMounted(async () => {
           transform="rotate(-90 50 50)"
           filter="url(#glow)"
         />
-
-        <!-- 内圈装饰点 -->
-        <circle
-          class="ring-dot"
-          cx="50"
-          cy="8"
-          r="1.5"
-          fill="rgba(255,255,255,0.3)"
-        />
       </svg>
 
       <div class="time-display">
@@ -258,7 +249,8 @@ onMounted(async () => {
     rgba(255, 255, 255, 0.03) 100%
   );
   background-size: 200% 100%;
-  animation: shimmer 1.5s ease-in-out infinite;
+  animation: shimmer 2s ease-in-out infinite;
+  will-change: background-position;
 }
 
 .skeleton-time {
@@ -274,7 +266,8 @@ onMounted(async () => {
     rgba(255, 255, 255, 0.05) 100%
   );
   background-size: 200% 100%;
-  animation: shimmer 1.5s ease-in-out infinite 0.2s;
+  animation: shimmer 2s ease-in-out infinite 0.2s;
+  will-change: background-position;
 }
 
 .skeleton-mode {
@@ -290,7 +283,8 @@ onMounted(async () => {
     rgba(255, 255, 255, 0.03) 100%
   );
   background-size: 200% 100%;
-  animation: shimmer 1.5s ease-in-out infinite 0.4s;
+  animation: shimmer 2s ease-in-out infinite 0.4s;
+  will-change: background-position;
 }
 
 @keyframes shimmer {
@@ -303,6 +297,7 @@ onMounted(async () => {
   position: absolute;
   border-radius: 50%;
   pointer-events: none;
+  will-change: transform;
 }
 
 .glow-1 {
@@ -311,8 +306,8 @@ onMounted(async () => {
   background: radial-gradient(circle, rgba(231, 76, 60, var(--glow1-opacity)) 0%, transparent 60%);
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
-  animation: pulse 4s ease-in-out infinite;
+  transform: translate(-50%, -50%) scale(1);
+  animation: pulse 8s ease-in-out infinite;
 }
 
 .glow-2 {
@@ -321,12 +316,17 @@ onMounted(async () => {
   background: radial-gradient(circle, rgba(52, 152, 219, var(--glow2-opacity)) 0%, transparent 60%);
   bottom: 5%;
   right: 5%;
-  animation: pulse 4s ease-in-out infinite 2s;
+  animation: pulse2 8s ease-in-out infinite 2s;
+}
+
+@keyframes pulse2 {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.03); opacity: 1; }
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 0.7; }
+  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.7; }
+  50% { transform: translate(-50%, -50%) scale(1.03); opacity: 1; }
 }
 
 .close-btn {
@@ -389,22 +389,6 @@ onMounted(async () => {
   transition: stroke-dashoffset 0.3s ease-out, stroke 0.3s ease;
 }
 
-/* 最后1分钟呼吸闪烁效果 */
-.progress-ring.last-minute .ring-progress {
-  animation: pulse-glow 1s ease-in-out infinite;
-}
-
-@keyframes pulse-glow {
-  0%, 100% {
-    filter: drop-shadow(0 0 8px rgba(243, 156, 18, 0.6));
-    opacity: 1;
-  }
-  50% {
-    filter: drop-shadow(0 0 20px rgba(243, 156, 18, 0.9));
-    opacity: 0.85;
-  }
-}
-
 /* 完成时弹性缩放动画 */
 .progress-ring.complete {
   animation: complete-bounce 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
@@ -416,16 +400,6 @@ onMounted(async () => {
   60% { transform: scale(0.96); }
   80% { transform: scale(1.03); }
   100% { transform: scale(1); }
-}
-
-.ring-dot {
-  animation: rotate-dot 20s linear infinite;
-  transform-origin: 50px 50px;
-}
-
-@keyframes rotate-dot {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 .time-display {
@@ -454,7 +428,6 @@ onMounted(async () => {
 /* 最后1分钟时间颜色变橙/珊瑚红 */
 .time.last-minute {
   color: #f39c12;
-  animation: time-pulse 1s ease-in-out infinite;
 }
 
 .light-theme .time.last-minute {
@@ -463,11 +436,6 @@ onMounted(async () => {
 
 .time.complete {
   color: #4ecdc4;
-}
-
-@keyframes time-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
 }
 
 .mode-label {
