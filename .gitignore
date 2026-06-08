@@ -37,6 +37,7 @@ generate-icon.js
 extract.ps1
 
 # Misc
-*.md !README.md
+*.md
+!README.md
 *.jpg
 main.js
