@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+#self
+.gitignore
+
 # Build outputs
 dist/
 dist-electron/
