@@ -4,25 +4,58 @@
 
 ## 功能特性
 
-- 🍅 番茄计时器 - 专注、短休息、长休息三种模式
+- 🍅 番茄计时器 - 专注、短休息、长休息三种模式，每 4 个番茄触发长休息
 - 📋 任务管理 - 支持多任务并行、任务历史追踪
-- 📊 数据统计 - 打卡表、专注时长统计
-- 🔔 音效提醒 - 预设音效（铃铛、鸟鸣、叮咚、滴答）
+- 📊 数据统计 - 打卡表（热力图）、专注时长统计、年度/累计统计
+- 🎯 今日目标 - 横条进度，完成超目标显示实际百分比（如 200%）
+- 🗓️ 热力图日历筛选 - 点击标题弹出滚轮选择器，拖动/滚动切换年份月份
+- 🔔 音效提醒 - 预设音效（铃铛、鸟鸣、叮咚、滴答）+ 自定义音频
 - 🌙 主题切换 - 深色/浅色模式
-- 💾 数据备份 - JSON/CSV 格式导出
+- 💾 数据备份 - JSON/CSV 格式导出，导入后可 100% 还原（含统计与连胜）
+- 🖱️ 专注窗口 - 小窗/全屏两种专注模式，独立计时
+
+## 技术栈
+
+| 技术 | 版本 |
+|------|------|
+| Electron | ^28.0.0 |
+| Vue 3 | ^3.4.21 |
+| TypeScript | ^5.4.2 |
+| Vite | ^5.1.6 |
+| Pinia | ^2.1.7 |
+| electron-store | ^8.1.0 |
 
 ## 快速开始
 
 ```bash
-# 安装依赖
+# 安装依赖（postinstall 会自动打 electron-builder 无证书补丁）
 npm install
 
-# 开发模式
+# 开发模式（自动启动 Electron + Vite）
 npm run dev
 
-# 构建打包
-npm run build
+# 打包便携版（zip 解压即用）
+npm run build:zip
+
+# 打包便携版（单 exe 自解压）
+npm run build:portable
+
+# 打包全部（zip + portable + NSIS 安装版）
+npm run build:all
 ```
+
+## 快捷键
+
+| 按键 | 功能 |
+|------|------|
+| `Space` | 开始 / 暂停计时器 |
+| `R` | 重置计时器 |
+| `S` | 打开设置 |
+| `N` | 聚焦任务输入框 |
+| `1` / `2` / `3` | 切到专注 / 短休息 / 长休息 |
+| `Escape` | 关闭弹窗 / 取消录制快捷键 |
+| `Alt+F` | 切全屏专注（可在设置自定义） |
+| `Alt+M` | 切小窗专注（可在设置自定义） |
 
 ## 项目结构
 
@@ -41,7 +74,8 @@ npm run build
 │   │   ├── SettingsPanel.vue   # 设置面板
 │   │   ├── FocusWindow.vue     # 专注窗口
 │   │   ├── CelebrationOverlay.vue # 完成动画
-│   │   └── DataManager.vue      # 数据管理
+│   │   ├── DataManager.vue      # 数据管理
+│   │   └── AppToast.vue        # 全局 toast 提示
 │   ├── stores/         # Pinia 状态管理
 │   │   ├── timer.ts     # 计时器状态
 │   │   ├── task.ts      # 任务状态
@@ -241,8 +275,21 @@ saveRecords(): void
 
 ## 数据持久化
 
-使用 `electron-store` 存储在 `data/` 目录：
-- `tasks` - 任务列表
-- `records` - 番茄记录
-- `settings` - 用户设置
-- `streakData` - 连胜数据
+使用 `electron-store` 存储，数据文件在 `data/config.json`（dev 模式位于项目根 `data/`，打包版位于程序目录 `resources/data/`）：
+
+| key | 内容 |
+|-----|------|
+| `tasks` | 任务列表 |
+| `records` | 番茄记录（保留 365 天）|
+| `settings` | 用户设置 |
+| `streakData` | 连胜数据 |
+| `lifetimeStats` | 永久累计统计 |
+| `yearStats` | 按年统计 |
+
+> 数据目录不提交到 git，属用户本地数据。
+
+## 开源协议
+
+本项目基于 **MIT License** 开源，详见 [LICENSE](./LICENSE)。
+
+MIT 允许自由使用、修改、分发（含商用），但必须保留版权声明，且作者不承担任何责任。
