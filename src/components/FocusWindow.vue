@@ -1,5 +1,16 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useStatsStore } from '@/stores/stats'
+import { matchShortcut } from '@/utils'
+import { isShortcutRecording } from '@/utils/shortcut-state'
+import type { ShortcutConfig } from '@/types'
+
+// 用户自定义的"切窗口"快捷键(onMounted 时从主进程 store 拉一次)
+// 默认 Alt+F / Alt+M —— 用户在主窗口改快捷键后,这里也跟着改
+const shortcuts = ref<ShortcutConfig>({
+  toggleFullscreen: 'Alt+F',
+  toggleCompact: 'Alt+M'
+})
 
 const timeLeft = ref(25 * 60)
 const mode = ref('focus')
@@ -9,6 +20,33 @@ const isRunning = ref(false)
 const isDark = ref(true)
 const isLastMinute = ref(false)
 const isLoaded = ref(false) // 骨架屏状态
+const currentTaskName = ref('') // 从主进程 IPC 同步过来
+
+// 窗口显示模式（启动默认 compact，不持久化）
+const viewMode = ref<'compact' | 'fullscreen'>('compact')
+
+// 接入 stores
+const statsStore = useStatsStore()
+
+// 励志语库（每 30 秒轮播）
+const quotes = [
+  'Stay focused, stay foolish.',
+  '专注是通往卓越的唯一道路。',
+  '把每一分钟都用在重要的事上。',
+  'Done is better than perfect.',
+  '深度工作，深度生活。',
+  '番茄虽小，积少成多。',
+  '心无旁骛，万事可成。',
+  'The quieter you become, the more you hear.'
+]
+const currentQuote = ref(quotes[0])
+let quoteInterval: number | null = null
+
+// 当前任务名（从主进程 IPC 同步）
+const currentTaskNameDisplay = computed(() => currentTaskName.value || '未选择任务')
+
+// 今日完成番茄数
+const todayCount = computed(() => statsStore.todayCount)
 
 const modeColors: Record<string, string> = {
   focus: '#e74c3c',
@@ -46,6 +84,20 @@ async function closeFocus() {
   }
 }
 
+// 在 FocusWindow 中：用户设的"切窗口"快捷键任一触发 → 返回主窗口
+// (进来用啥键出去用啥键,最自然)
+function handleKeydown(e: KeyboardEvent) {
+  if (isShortcutRecording()) return
+  if (
+    matchShortcut(e, shortcuts.value.toggleFullscreen) ||
+    matchShortcut(e, shortcuts.value.toggleCompact)
+  ) {
+    e.preventDefault()
+    console.log('[FocusWindow] 切窗口快捷键 - 返回主窗口')
+    closeFocus()
+  }
+}
+
 watch(showComplete, (val) => {
   if (val) {
     setTimeout(() => {
@@ -55,35 +107,32 @@ watch(showComplete, (val) => {
 })
 
 onMounted(async () => {
-  // 加载主题设置
+  // 加载主题设置 + 用户自定义快捷键(同一份 store 一次 IPC 拿完)
   if (window.electronAPI) {
-    const theme = await window.electronAPI.store.get('settings') as any
-    if (theme?.theme) {
-      isDark.value = theme.theme === 'dark'
-      document.documentElement.setAttribute('data-theme', theme.theme)
+    const settingsData = await window.electronAPI.store.get('settings') as any
+    if (settingsData?.theme) {
+      isDark.value = settingsData.theme === 'dark'
+      document.documentElement.setAttribute('data-theme', settingsData.theme)
+    }
+    if (settingsData?.shortcuts) {
+      shortcuts.value = settingsData.shortcuts
+      console.log('[FocusWindow] 同步 shortcuts:', shortcuts.value)
     }
   }
-
-  // 监听主题变化
-  window.addEventListener('storage', (e) => {
-    if (e.key === 'settings') {
-      const settings = JSON.parse(e.newValue || '{}')
-      if (settings.theme) {
-        isDark.value = settings.theme === 'dark'
-        document.documentElement.setAttribute('data-theme', settings.theme)
-      }
-    }
-  })
 
   // 专注窗口不运行自己的timer，完全依赖主窗口通过IPC发送的状态
   if (window.electronAPI) {
     // 先设置监听器
     window.electronAPI.focus.onStateUpdate((data) => {
+      console.log(`[FocusWindow] onStateUpdate → timeLeft=${data.timeLeft} isRunning=${data.isRunning} mode=${data.mode}`)
       timeLeft.value = data.timeLeft
       mode.value = data.mode
       total.value = data.total
       isRunning.value = data.isRunning
       isLastMinute.value = data.timeLeft <= 60 && data.timeLeft > 0
+      if (data.currentTaskName !== undefined) {
+        currentTaskName.value = data.currentTaskName
+      }
 
       // 处理完成状态
       if (data.justCompleted) {
@@ -91,23 +140,48 @@ onMounted(async () => {
       }
     })
 
-    // 等监听器设置完成后再获取初始状态
-    await new Promise(resolve => setTimeout(resolve, 50))
-
-    // 获取初始状态
-    const initData = await window.electronAPI.focus.getInitData()
+    // 同步获取初始状态（主进程在 did-finish-load 之后才提交 focusState,所以这里拿到的一定是最新值）
+    const initData = await window.electronAPI.focus.getInitData() as any
+    console.log(`[FocusWindow] onMounted → getInitData 返回: timeLeft=${initData.timeLeft} isRunning=${initData.isRunning} mode=${initData.mode} viewMode=${initData.focusMode}`)
+    console.log(`[FocusWindow] onMounted → 设置本地 timeLeft=${initData.timeLeft}`)
     timeLeft.value = initData.timeLeft
     mode.value = initData.mode
     total.value = initData.total
     isRunning.value = initData.isRunning
     isLastMinute.value = initData.timeLeft <= 60 && initData.timeLeft > 0
+    if (initData.currentTaskName !== undefined) {
+      currentTaskName.value = initData.currentTaskName
+    }
+    // 同步 viewMode(类型保护: 只接受 compact/fullscreen,其余回退 compact)
+    viewMode.value = initData.focusMode === 'fullscreen' ? 'fullscreen' : 'compact'
     isLoaded.value = true
+  }
+
+  // Alt+F 快捷键
+  window.addEventListener('keydown', handleKeydown)
+  console.log('[FocusWindow] Alt+F 快捷键已注册')
+
+  // 启动励志语轮播（每 30 秒切换一次）
+  quoteInterval = window.setInterval(() => {
+    const idx = quotes.indexOf(currentQuote.value)
+    currentQuote.value = quotes[(idx + 1) % quotes.length]
+    console.log('[FocusWindow] 切换励志语 →', currentQuote.value)
+  }, 30000)
+})
+
+// 组件卸载时清理
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
+  if (quoteInterval) {
+    clearInterval(quoteInterval)
+    quoteInterval = null
+    console.log('[FocusWindow] 清理键盘监听和励志语轮播')
   }
 })
 </script>
 
 <template>
-  <div class="focus-window" :class="{ 'light-theme': !isDark }">
+  <div class="focus-window" :class="['mode-' + viewMode, { 'light-theme': !isDark }]">
     <!-- 骨架屏 -->
     <div v-if="!isLoaded" class="skeleton-screen">
       <div class="skeleton-ring"></div>
@@ -125,6 +199,21 @@ onMounted(async () => {
           <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </button>
+
+      <!-- 全屏模式专属背景信息层 -->
+      <div v-if="viewMode === 'fullscreen'" class="fullscreen-bg">
+        <div class="bg-item bg-top-right">
+          <span class="bg-label">当前任务</span>
+          <span class="bg-value">{{ currentTaskNameDisplay }}</span>
+        </div>
+        <div class="bg-item bg-bottom-left">
+          <span class="bg-label">今日完成</span>
+          <span class="bg-value">🍅 {{ todayCount }}</span>
+        </div>
+        <div class="bg-item bg-bottom-right">
+          <span class="bg-quote">「{{ currentQuote }}」</span>
+        </div>
+      </div>
 
       <div class="timer-container">
       <svg class="progress-ring" :class="{ 'last-minute': isLastMinute, 'complete': showComplete }" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
@@ -208,6 +297,14 @@ onMounted(async () => {
   --glow2-opacity: 0.05;
   --ring-bg: rgba(45, 36, 32, 0.1);
   --btn-bg: rgba(45, 36, 32, 0.1);
+}
+
+/* 全屏模式：背景完全不透明，避免 transparent 窗口透出桌面 */
+.focus-window.mode-fullscreen {
+  --bg-gradient: radial-gradient(ellipse at center, #1a1614 0%, #1a1614 100%);
+}
+.focus-window.mode-fullscreen.light-theme {
+  --bg-gradient: radial-gradient(ellipse at center, #faf8f5 0%, #faf8f5 100%);
 }
 
 .focus-window {
@@ -367,12 +464,96 @@ onMounted(async () => {
   height: 50%;
 }
 
+/* ============== 全屏模式专属样式 ============== */
+.focus-window.mode-fullscreen .timer-container {
+  width: 90vmin;
+  height: 90vmin;
+}
+
+.focus-window.mode-fullscreen .time {
+  font-size: 22vmin;
+}
+
+.focus-window.mode-fullscreen .mode-label {
+  font-size: 4vmin;
+}
+
+.focus-window.mode-fullscreen .glow-1 {
+  width: 130vmin;
+  height: 130vmin;
+  opacity: 0.4;
+}
+
+.focus-window.mode-fullscreen .glow-2 {
+  width: 80vmin;
+  height: 80vmin;
+  opacity: 0.25;
+}
+
+/* 全屏背景信息层 */
+.fullscreen-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.bg-item {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8vmin;
+  font-family: 'DM Sans', sans-serif;
+}
+
+.bg-top-right {
+  top: 6vmin;
+  right: 6vmin;
+  text-align: right;
+}
+
+.bg-bottom-left {
+  bottom: 6vmin;
+  left: 6vmin;
+}
+
+.bg-bottom-right {
+  bottom: 6vmin;
+  right: 6vmin;
+  text-align: right;
+}
+
+.bg-label {
+  font-size: 1.8vmin;
+  color: var(--fg-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.8vmin;
+  opacity: 0.7;
+}
+
+.bg-value {
+  font-size: 3vmin;
+  color: var(--fg-primary);
+  font-weight: 500;
+  letter-spacing: 0.3vmin;
+}
+
+.bg-quote {
+  font-size: 2.5vmin;
+  color: var(--fg-secondary);
+  font-style: italic;
+  letter-spacing: 0.4vmin;
+  opacity: 0.85;
+  font-family: 'DM Serif Display', serif;
+}
+
 .timer-container {
   position: relative;
   width: 80vmin;
   height: 80vmin;
   min-width: 120px;
   min-height: 120px;
+  z-index: 3;
 }
 
 .progress-ring {

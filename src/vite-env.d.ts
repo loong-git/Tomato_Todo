@@ -6,26 +6,7 @@ declare module '*.vue' {
   export default component
 }
 
-interface ElectronAPI {
-  store: {
-    get: (key: string) => Promise<unknown>
-    set: (key: string, value: unknown) => Promise<void>
-    delete: (key: string) => Promise<void>
-  }
-  notification: {
-    show: (options: { title: string; body: string }) => Promise<void>
-  }
-  dialog: {
-    openFile: () => Promise<string>
-  }
-  audio: {
-    play: (filePath: string) => Promise<boolean>
-    stop: () => Promise<boolean>
-  }
-}
+// ElectronAPI 接口定义在 src/types/electron.d.ts（含 declare global）
+// 这里不再重复声明
+export {}
 
-declare global {
-  interface Window {
-    electronAPI: ElectronAPI
-  }
-}

@@ -1,27 +1,15 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
 import { useTimerStore } from '@/stores'
 
 const timerStore = useTimerStore()
-const showStopAudio = ref(false)
 
-// 监听 justCompleted，当计时完成时显示停止音频按钮
-watch(() => timerStore.justCompleted, (completed) => {
-  if (completed) {
-    showStopAudio.value = true
-  }
-})
-
-async function stopAudio() {
-  if (window.electronAPI) {
-    await window.electronAPI.audio.stop()
-    showStopAudio.value = false
-  }
+// [P2-11 修复] 停止音频按钮显隐由 timer store 的 isAudioPlaying 驱动：
+// 仅在自定义音频实际播放时显示（playSound 成功置 true，播完/用户停止置 false）
+function stopAudio() {
+  timerStore.stopAudio()
 }
 
 function toggleTimer() {
-  // 点击开始/暂停时，显示停止音频按钮
-  showStopAudio.value = true
   timerStore.isRunning ? timerStore.pause() : timerStore.start()
 }
 </script>
@@ -57,10 +45,10 @@ function toggleTimer() {
       </button>
     </div>
 
-    <!-- 停止音频按钮 - 一直显示，点击开始/暂停后隐藏 -->
+    <!-- 停止音频按钮 - 仅在自定义音频实际播放时显示 -->
     <Transition name="fade">
       <button
-        v-if="showStopAudio"
+        v-if="timerStore.isAudioPlaying"
         class="stop-audio-btn"
         @click="stopAudio"
         title="停止音频"

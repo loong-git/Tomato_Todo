@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed, onUnmounted } from 'vue'
 import { useTimerStore, useTaskStore, useSettingsStore, useStatsStore } from '@/stores'
+import { matchShortcut } from '@/utils'
+import { isShortcutRecording } from '@/utils/shortcut-state'
 import TimerDisplay from '@/components/TimerDisplay.vue'
 import TimerControls from '@/components/TimerControls.vue'
 import ModeSelector from '@/components/ModeSelector.vue'
@@ -10,6 +12,7 @@ import SettingsPanel from '@/components/SettingsPanel.vue'
 import FocusWindow from '@/components/FocusWindow.vue'
 import CelebrationOverlay from '@/components/CelebrationOverlay.vue'
 import DataManager from '@/components/DataManager.vue'
+import AppToast from '@/components/AppToast.vue'
 
 const timerStore = useTimerStore()
 const taskStore = useTaskStore()
@@ -30,10 +33,31 @@ const isDark = computed({
 
 // 键盘快捷键处理
 function handleKeydown(e: KeyboardEvent) {
+  // SettingsPanel 正在录制快捷键 → 全局快捷键让路
+  if (isShortcutRecording()) return
+
   const tag = (e.target as HTMLElement).tagName
   const isInputField = tag === 'INPUT' || tag === 'TEXTAREA'
 
-  console.log('[键盘事件] key:', e.key, 'target:', tag)
+  // 用户自定义的切窗口快捷键(默认 Alt+F = 切全屏, Alt+M = 切小窗)
+  if (matchShortcut(e, settingsStore.settings.shortcuts.toggleFullscreen)) {
+    e.preventDefault()
+    console.log('[键盘事件] toggleFullscreen - 打开全屏专注')
+    openFocusMode('fullscreen')
+    return
+  }
+  if (matchShortcut(e, settingsStore.settings.shortcuts.toggleCompact)) {
+    e.preventDefault()
+    console.log('[键盘事件] toggleCompact - 打开小窗专注')
+    openFocusMode('compact')
+    return
+  }
+
+  // [P3-14 修复] 日志仅 dev 环境打印，避免用户打字时每键一刷 console；
+  // import.meta.env.DEV 在打包时被 vite 静态剔除，生产/打包后 0 开销。
+  if (import.meta.env.DEV) {
+    console.log('[键盘事件] key:', e.key, 'target:', tag)
+  }
 
   // 输入框中只响应 Escape
   if (isInputField) {
@@ -82,33 +106,6 @@ function handleKeydown(e: KeyboardEvent) {
       settingsRef.value?.close?.()
       break
   }
-}
-
-async function injectTestData() {
-  await statsStore.injectYesterdayData()
-  await statsStore.injectHistoryTasks()
-  console.log('[Test] 测试数据已注入')
-}
-
-async function clearAllData() {
-  if (!confirm('确定要清空所有任务、记录和统计数据吗？此操作不可恢复！')) return
-
-  // 清空内存
-  taskStore.tasks = []
-  statsStore.records = []
-  statsStore.lifetimeStats = { totalCount: 0, totalSeconds: 0 }
-  statsStore.yearStats = {}
-
-  // 立即持久化
-  if (window.electronAPI) {
-    await window.electronAPI.store.set('tasks', [])
-    await window.electronAPI.store.set('records', [])
-    await window.electronAPI.store.set('lifetimeStats', { totalCount: 0, totalSeconds: 0 })
-    await window.electronAPI.store.set('yearStats', {})
-  }
-
-  console.log('[Test] 全部数据已清零')
-  alert('已清空所有数据，请重新测试')
 }
 
 onMounted(async () => {
@@ -191,43 +188,10 @@ watch(() => timerStore.pomodoroCount, (newCount, oldCount) => {
   }
 })
 
-// 发送计时器状态更新到主进程
-watch([() => timerStore.timeLeft, () => timerStore.mode, () => timerStore.justCompleted, () => timerStore.currentDuration], () => {
-  if (window.electronAPI) {
-    const now = Date.now()
-    console.log(`[主→专注] timeLeft:${timerStore.timeLeft} isRunning:${timerStore.isRunning} [${now}]`)
-    window.electronAPI.focus.sendState({
-      timeLeft: timerStore.timeLeft,
-      mode: timerStore.mode,
-      isRunning: timerStore.isRunning,
-      justCompleted: timerStore.justCompleted,
-      total: timerStore.currentDuration
-    })
-    // 更新托盘倒计时
-    window.electronAPI.tray.updateState({
-      timeLeft: timerStore.timeLeft,
-      isRunning: timerStore.isRunning
-    })
-  }
-})
-
-// 单独监听 isRunning 变化
-watch(() => timerStore.isRunning, (newVal) => {
-  if (window.electronAPI) {
-    window.electronAPI.focus.sendState({
-      timeLeft: timerStore.timeLeft,
-      mode: timerStore.mode,
-      isRunning: newVal,
-      justCompleted: timerStore.justCompleted,
-      total: timerStore.currentDuration
-    })
-    // 更新托盘状态
-    window.electronAPI.tray.updateState({
-      timeLeft: timerStore.timeLeft,
-      isRunning: newVal
-    })
-  }
-})
+// 注意: 之前这里有个 watch 自动同步 timeLeft/mode/isRunning 等到主进程
+// 但这个 watcher 误触发了 timeLeft 跳回 currentDuration 的 bug
+// 改由 timer store 内 start/pause/reset/setMode/skip/complete/setInterval 显式调 emitStateChange() 同步
+// 见 src/stores/timer.ts: emitStateChange() 函数
 
 // 监听托盘切换计时器
 if (window.electronAPI) {
@@ -265,6 +229,38 @@ function closeWindow() {
     window.electronAPI.window.close()
   }
 }
+
+// 打开专注模式（compact 小窗 / fullscreen 全屏）
+async function openFocusMode(mode: 'compact' | 'fullscreen') {
+  console.log(`[App] openFocusMode 入口: mode=${mode} timerStore.timeLeft=${timerStore.timeLeft} isRunning=${timerStore.isRunning}`)
+  if (!window.electronAPI) return
+
+  // 内联 getCurrentTaskName 逻辑(原函数已搬至 timer store)
+  const ids = timerStore.currentTaskIds
+  const taskName = ids.length
+    ? (taskStore.tasks.find(t => t.id === ids[0])?.name || '')
+    : ''
+  console.log('[App] 准备打开专注，currentTaskIds:', JSON.stringify(timerStore.currentTaskIds), 'taskName:', taskName, 'tasks.length:', taskStore.tasks.length)
+
+  const data = {
+    timeLeft: timerStore.timeLeft,
+    mode: timerStore.mode,
+    isRunning: timerStore.isRunning,
+    justCompleted: false,
+    total: timerStore.currentDuration,
+    currentTaskName: taskName,
+    currentTaskIds: [...timerStore.currentTaskIds]
+  }
+  console.log(`[App] 调 await focus.open → data.timeLeft=${data.timeLeft} data.isRunning=${data.isRunning}`)
+  try {
+    await window.electronAPI.focus.open(data, mode)
+  } catch (e) {
+    // 主进程已回滚(mainWindow.show + focus:modeChange(false))
+    console.error('[App] 打开专注窗口失败,主进程已回滚:', e)
+  }
+  console.log(`[App] await focus.open 返回 → timerStore.timeLeft=${timerStore.timeLeft} isRunning=${timerStore.isRunning}`)
+}
+// 注意: getCurrentTaskName() 已搬至 src/stores/timer.ts 内(emitStateChange 内部使用)
 </script>
 
 <template>
@@ -290,6 +286,16 @@ function closeWindow() {
           </svg>
           <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <button class="focus-btn" @click="openFocusMode('compact')" title="小窗专注 (Alt+F)">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="5" y="5" width="14" height="14" rx="1.5"/>
+          </svg>
+        </button>
+        <button class="focus-btn" @click="openFocusMode('fullscreen')" title="全屏专注">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
         <SettingsPanel ref="settingsRef" />
@@ -321,38 +327,10 @@ function closeWindow() {
     </main>
   </div>
   <CelebrationOverlay />
-
-  <!-- 临时测试面板 -->
-  <div class="dev-test-panel">
-    <button class="dev-btn" @click="injectTestData" title="注入测试数据">📊</button>
-    <button class="dev-btn reset-btn" @click="clearAllData" title="清空所有数据" style="background:linear-gradient(135deg,#7f8c8d,#34495e);margin-top:8px;">🗑️</button>
-  </div>
+  <AppToast />
 </template>
 
 <style scoped>
-.dev-test-panel {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 9999;
-}
-
-.dev-btn {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #e74c3c, #c0392b);
-  color: white;
-  border: none;
-  font-size: 20px;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  transition: transform 0.2s ease;
-}
-
-.dev-btn:hover {
-  transform: scale(1.1);
-}
 </style>
 
 <style>
@@ -476,7 +454,8 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  -webkit-app-region: no-drag;
+  /* [标题栏拖动优化] no-drag → drag：logo 无点击事件，整段参与拖动，扩大可拖面积 */
+  -webkit-app-region: drag;
 }
 
 .tomato-icon {
@@ -500,6 +479,7 @@ body {
 }
 
 .theme-toggle,
+.focus-btn,
 .window-btn {
   width: 32px;
   height: 32px;
@@ -515,6 +495,7 @@ body {
 }
 
 .theme-toggle:hover,
+.focus-btn:hover,
 .window-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text-primary);
@@ -646,6 +627,7 @@ main::-webkit-scrollbar-corner {
 }
 
 .light-theme .theme-toggle:hover,
+.light-theme .focus-btn:hover,
 .light-theme .window-btn:hover {
   background: rgba(0, 0, 0, 0.05);
   color: #2d2420;

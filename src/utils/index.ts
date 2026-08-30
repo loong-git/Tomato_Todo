@@ -250,3 +250,81 @@ export function playCelebrationSound(): void {
   // 第二个音：G6 (1568Hz) "咚" - 完结提示
   playNote(duration + 0.18, 1568)
 }
+
+// ============================================================
+// 快捷键工具(用户可自定义切窗口快捷键)
+// 存储格式:人类可读字符串,如 "Alt+F" / "Ctrl+Shift+M" / "Alt+ArrowUp"
+// ============================================================
+
+export interface ShortcutParts {
+  key: string         // 'f' / 'arrowup' / 'escape' 等(已 lowercase)
+  alt: boolean
+  ctrl: boolean
+  shift: boolean
+  meta: boolean       // Cmd(Win) / Super
+}
+
+/**
+ * 把人类可读字符串解析为结构化对象
+ * 接受 'Alt+F' / 'alt+f' / 'Ctrl+Shift+X' / 'Meta+M' 等大小写
+ */
+export function parseShortcut(s: string): ShortcutParts | null {
+  if (!s || typeof s !== 'string') return null
+  const parts = s.split('+').map(p => p.trim().toLowerCase()).filter(Boolean)
+  if (!parts.length) return null
+  const result: ShortcutParts = { key: '', alt: false, ctrl: false, shift: false, meta: false }
+  for (const p of parts) {
+    if (p === 'ctrl' || p === 'control') result.ctrl = true
+    else if (p === 'alt' || p === 'option') result.alt = true
+    else if (p === 'shift') result.shift = true
+    else if (p === 'meta' || p === 'cmd' || p === 'command' || p === 'win' || p === 'super') result.meta = true
+    else result.key = p
+  }
+  // 至少要有一个非修饰键
+  if (!result.key) return null
+  // 单字符全部 lower,功能键保留(e.g. 'escape', 'arrowup')
+  return result
+}
+
+/**
+ * 检查一个 KeyboardEvent 是否匹配给定的快捷键字符串
+ */
+export function matchShortcut(e: KeyboardEvent, s: string): boolean {
+  const p = parseShortcut(s)
+  if (!p) return false
+  const key = (e.key || '').toLowerCase()
+  return p.key === key
+    && p.alt === !!e.altKey
+    && p.ctrl === !!e.ctrlKey
+    && p.shift === !!e.shiftKey
+    && p.meta === !!e.metaKey
+}
+
+/**
+ * 把 KeyboardEvent 转成人类可读字符串
+ * - 必须有至少一个修饰键(Alt/Ctrl/Shift/Meta)才返回,防止误捕获普通按键
+ * - 单独的 Esc / 单独字母键不允许(用户用不上)
+ * - 单字符键大写显示(F/M),功能键保留原样(Esc / ArrowUp)
+ * - 返回 null 表示拒绝(无修饰键 / 单独按 Esc / 单独按修饰键)
+ */
+export function eventToShortcut(e: KeyboardEvent): string | null {
+  // 单独的修饰键(用户没按其他键)不算快捷键
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return null
+  // 单独的 Esc 用于"取消录制",也不算快捷键
+  if (e.key === 'Escape' && !e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey) return null
+  // 必须有修饰键
+  if (!e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey) return null
+
+  let key = e.key
+  if (key === ' ') key = 'Space'
+  // 单字符键大写显示
+  if (key.length === 1) key = key.toUpperCase()
+
+  return [
+    e.ctrlKey && 'Ctrl',
+    e.altKey && 'Alt',
+    e.shiftKey && 'Shift',
+    e.metaKey && 'Meta',
+    key
+  ].filter(Boolean).join('+')
+}

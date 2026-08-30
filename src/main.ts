@@ -6,9 +6,15 @@ import App from './App.vue'
 import './styles/global.css'
 
 // Loading动画
-const loader = document.createElement('div')
-loader.id = 'app-loader'
-loader.innerHTML = `
+// 主窗口启动时显示 splash（欢迎使用番茄TODO,1.5s 后淡出）
+// FocusWindow 加载时跳过 splash —— 切窗口不应该再卡 2s,主进程已把状态准备好
+const isFocusWindow = window.location.hash === '#/focus'
+let loader: HTMLDivElement | null = null
+
+if (!isFocusWindow) {
+  loader = document.createElement('div')
+  loader.id = 'app-loader'
+  loader.innerHTML = `
 <style>
   #app-loader {
     position: fixed;
@@ -51,23 +57,27 @@ loader.innerHTML = `
 </div>
 <div class="loader-text">欢迎使用番茄TODO</div>
 `
-document.body.appendChild(loader)
+  document.body.appendChild(loader)
+}
 
 const app = createApp(App)
 app.use(createPinia())
 app.use(ElementPlus)
 app.mount('#app')
 
-// Vue挂载后移除loading - 延长显示时间
-const removeLoader = () => {
-  setTimeout(() => {
-    loader.style.opacity = '0'
-    loader.style.transition = 'opacity 0.5s'
-    setTimeout(() => loader.remove(), 500)
-  }, 1500) // 动画保持1.5秒后再开始淡出
-}
-if (document.readyState === 'complete') {
-  removeLoader()
-} else {
-  window.addEventListener('load', removeLoader)
+if (!isFocusWindow && loader) {
+  // Vue挂载后移除loading - 延长显示时间
+  const removeLoader = () => {
+    setTimeout(() => {
+      if (!loader) return
+      loader.style.opacity = '0'
+      loader.style.transition = 'opacity 0.5s'
+      setTimeout(() => loader.remove(), 500)
+    }, 1500) // 动画保持1.5秒后再开始淡出
+  }
+  if (document.readyState === 'complete') {
+    removeLoader()
+  } else {
+    window.addEventListener('load', removeLoader)
+  }
 }

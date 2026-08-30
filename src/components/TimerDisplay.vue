@@ -23,17 +23,6 @@ watch(() => timerStore.timeLeft, (timeLeft) => {
   isLastMinute.value = timeLeft <= 60 && timeLeft > 0
 })
 
-async function openFocusMode() {
-  if (window.electronAPI) {
-    await window.electronAPI.focus.open({
-      timeLeft: timerStore.timeLeft,
-      mode: timerStore.mode,
-      isRunning: timerStore.isRunning,
-      total: timerStore.currentDuration
-    })
-  }
-}
-
 const modeColors = {
   focus: '#e74c3c',
   shortBreak: '#3498db',
@@ -64,12 +53,6 @@ const strokeDashoffset = computed(() => {
 
 <template>
   <div class="timer-display">
-    <button class="focus-btn" @click="openFocusMode" title="专注模式">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
-
     <svg class="progress-ring" :class="{ 'last-minute': isLastMinute, 'complete': showComplete }" viewBox="0 0 280 280">
       <defs>
         <filter id="timerGlow" x="-50%" y="-50%" width="200%" height="200%">
@@ -141,36 +124,6 @@ const strokeDashoffset = computed(() => {
   backdrop-filter: blur(20px);
   border: 1px solid var(--border-color);
   box-shadow: 0 8px 32px var(--shadow);
-}
-
-.focus-btn {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  width: 44px;
-  height: 44px;
-  border: none;
-  background: var(--bg-card);
-  backdrop-filter: blur(10px);
-  border-radius: 14px;
-  cursor: pointer;
-  padding: 10px;
-  z-index: 10;
-  color: var(--text-secondary);
-  transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-  border: 1px solid var(--border-color);
-}
-
-.focus-btn:hover {
-  background: var(--tomato);
-  color: white;
-  transform: scale(1.08);
-  box-shadow: 0 6px 24px rgba(231, 76, 60, 0.4);
-  border-color: transparent;
-}
-
-.focus-btn:active {
-  transform: scale(0.95);
 }
 
 .progress-ring {

@@ -16,15 +16,15 @@ interface ElectronAPI {
   audio: {
     play: (filePath: string) => Promise<boolean>
     stop: () => Promise<boolean>
+    // [P2-11 修复] 音频播放结束通知（自定义文件播放完毕）
+    onEnd: (callback: () => void) => void
   }
   focus: {
-    open: (data: { timeLeft: number; mode: string; isRunning: boolean; total: number }) => Promise<void>
+    open: (data: { timeLeft: number; mode: string; isRunning: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }, mode?: 'compact' | 'fullscreen') => Promise<void>
     close: () => Promise<void>
-    getInitData: () => Promise<{ timeLeft: number; mode: string; isRunning: boolean; total: number }>
-    sendState: (data: { timeLeft: number; mode: string; isRunning: boolean; justCompleted: boolean; total: number }) => void
-    onStateUpdate: (callback: (data: { timeLeft: number; mode: string; isRunning: boolean; justCompleted: boolean; total: number }) => void) => void
-    onTick: (callback: (data: { timeLeft: number }) => void) => void
-    onCompleted: (callback: () => void) => void
+    getInitData: () => Promise<{ timeLeft: number; mode: string; isRunning: boolean; total: number; currentTaskName: string; currentTaskIds: string[]; focusMode: 'compact' | 'fullscreen' | null }>
+    sendState: (data: { timeLeft: number; mode: string; isRunning: boolean; justCompleted: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }) => void
+    onStateUpdate: (callback: (data: { timeLeft: number; mode: string; isRunning: boolean; justCompleted: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }) => void) => void
     onFocusModeChange: (callback: (active: boolean) => void) => void
   }
   window: {

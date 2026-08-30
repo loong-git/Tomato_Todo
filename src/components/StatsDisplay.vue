@@ -1,23 +1,11 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useStatsStore, useSettingsStore } from '@/stores'
+import { useStatsStore, useSettingsStore, useTimerStore } from '@/stores'
+import { toast } from '@/utils/toast'
 
 const statsStore = useStatsStore()
 const settingsStore = useSettingsStore()
-
-// Toast 提示
-const toastMessage = ref('')
-const toastType = ref<'success' | 'error'>('success')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-
-function showToast(message: string, type: 'success' | 'error' = 'success') {
-  toastMessage.value = message
-  toastType.value = type
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    toastMessage.value = ''
-  }, 2000)
-}
+const timerStore = useTimerStore()
 
 // 详细数据弹窗
 const showDetail = ref(false)
@@ -51,6 +39,146 @@ function goToToday() {
   const today = new Date()
   viewYear.value = today.getFullYear()
   viewMonth.value = today.getMonth()
+}
+
+const showFilter = ref(false)
+
+// [热力图日历筛选] 滚轮选择器：用索引控制当前选中项，每列只显示一个值
+const tempYear = ref(new Date().getFullYear())
+const tempMonth = ref(new Date().getMonth() + 1)
+// 可滚动年份范围（今年往前 10 年）
+const pickerYears = computed(() => {
+  const cur = new Date().getFullYear()
+  const arr: number[] = []
+  for (let y = cur; y >= cur - 9; y--) arr.push(y)
+  return arr
+})
+const pickerMonths = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+// 当前选中项的索引
+const yearIndex = ref(0)
+const monthIndex = ref(0)
+
+function openFilter() {
+  // 初始化索引：根据 tempYear/tempMonth 在数组中的位置
+  const yIdx = pickerYears.value.indexOf(viewYear.value)
+  yearIndex.value = yIdx >= 0 ? yIdx : 0
+  const mIdx = pickerMonths.indexOf(viewMonth.value + 1)
+  monthIndex.value = mIdx >= 0 ? mIdx : 0
+  tempYear.value = viewYear.value
+  tempMonth.value = viewMonth.value + 1
+  showFilter.value = true
+}
+
+function onWheel(event: WheelEvent, type: 'year' | 'month') {
+  const delta = event.deltaY > 0 ? 1 : -1
+  if (type === 'year') {
+    const newIdx = Math.max(0, Math.min(pickerYears.value.length - 1, yearIndex.value + delta))
+    if (newIdx !== yearIndex.value) {
+      yearIndex.value = newIdx
+      tempYear.value = pickerYears.value[newIdx]
+    }
+  } else {
+    const newIdx = Math.max(0, Math.min(pickerMonths.length - 1, monthIndex.value + delta))
+    if (newIdx !== monthIndex.value) {
+      monthIndex.value = newIdx
+      tempMonth.value = pickerMonths[newIdx]
+    }
+  }
+}
+
+// 拖动选择 + 惯性滚动：pointer 事件记录位移与速度，松手后按速度估算惯性格数，逐格减速滚动
+const ROW_H = 40 // 行高（与 CSS .picker-wheel-item height 一致）
+const drag = {
+  active: false,
+  startY: 0,
+  startIdx: 0,
+  type: 'year' as 'year' | 'month',
+  lastY: 0,
+  lastTime: 0,
+  velocity: 0 // 松手瞬间的速度（px/ms），用于估算惯性
+}
+let inertiaTimer: ReturnType<typeof setInterval> | null = null
+
+function clearInertia() {
+  if (inertiaTimer) {
+    clearInterval(inertiaTimer)
+    inertiaTimer = null
+  }
+}
+
+function setIndex(type: 'year' | 'month', idx: number) {
+  const maxIdx = type === 'year' ? pickerYears.value.length - 1 : pickerMonths.length - 1
+  const clamped = Math.max(0, Math.min(maxIdx, idx))
+  if (type === 'year') {
+    yearIndex.value = clamped
+    tempYear.value = pickerYears.value[clamped]
+  } else {
+    monthIndex.value = clamped
+    tempMonth.value = pickerMonths[clamped]
+  }
+  return clamped
+}
+
+function onPointerDown(event: PointerEvent, type: 'year' | 'month') {
+  clearInertia() // 打断正在进行的惯性
+  drag.active = true
+  drag.startY = event.clientY
+  drag.lastY = event.clientY
+  drag.lastTime = Date.now()
+  drag.startIdx = type === 'year' ? yearIndex.value : monthIndex.value
+  drag.type = type
+  drag.velocity = 0
+  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+}
+function onPointerMove(event: PointerEvent, type: 'year' | 'month') {
+  if (!drag.active || drag.type !== type) return
+  const now = Date.now()
+  const dt = Math.max(1, now - drag.lastTime)
+  drag.velocity = (event.clientY - drag.lastY) / dt // px/ms
+  drag.lastY = event.clientY
+  drag.lastTime = now
+
+  const dy = -(event.clientY - drag.startY)
+  const half = ROW_H / 2 // 拖动超过半行切换一项（向上拖→下一个/索引+）
+  let offset = Math.round(dy / half)
+  if (Math.abs(dy) < half) offset = 0
+  const newIdx = drag.startIdx + offset
+  setIndex(type, newIdx)
+}
+function onPointerUp(type: 'year' | 'month') {
+  drag.active = false
+  // 用松手瞬间的速度估算惯性：速度绝对值 px/ms → 惯性格数（1~4 格）
+  const speed = Math.abs(drag.velocity)
+  let steps = 0
+  if (speed > 0.5) {
+    // 速度阈值：0.5px/ms 起才有明显惯性；越快惯性越大
+    steps = Math.min(4, Math.max(1, Math.round(speed / 1.2)))
+  }
+  if (steps === 0) return
+  const dir = drag.velocity > 0 ? -1 : 1 // 向上拖(velocity<0) → 惯性向下一个(索引+)；向下拖 → 索引-
+  let count = 0
+  clearInertia()
+  inertiaTimer = setInterval(() => {
+    if (count >= steps) {
+      clearInertia()
+      return
+    }
+    const cur = type === 'year' ? yearIndex.value : monthIndex.value
+    const maxIdx = type === 'year' ? pickerYears.value.length - 1 : pickerMonths.length - 1
+    const next = cur + dir
+    if (next < 0 || next > maxIdx) {
+      clearInertia() // 到边界就停，不回弹
+      return
+    }
+    setIndex(type, next)
+    count++
+  }, 150) // 每 150ms 滚一格，逐渐停下
+}
+
+function confirmFilter() {
+  viewYear.value = tempYear.value
+  viewMonth.value = tempMonth.value - 1
+  showFilter.value = false
 }
 
 const viewTitle = computed(() => {
@@ -96,14 +224,13 @@ const totalFocusHoursToday = computed(() => {
 // 每日目标小时数（设置）
 const dailyHourGoal = computed(() => settingsStore.settings.dailyHourGoal ?? 4)
 
-// 目标进度百分比（基于精确秒数计算）
+// 目标进度百分比（基于精确秒数计算；[需求] 超过 100% 不封顶，如 1 小时目标完成 2 小时 → 200%）
 const hourGoalPercent = computed(() => {
   const goal = dailyHourGoal.value
   if (goal <= 0) return 100
   const goalSeconds = goal * 3600
   const raw = (totalFocusSecondsToday.value / goalSeconds) * 100
-  const capped = Math.min(100, raw)
-  return parseFloat(capped.toFixed(1))
+  return parseFloat(raw.toFixed(1))
 })
 
 // 是否已完成今日目标
@@ -196,32 +323,11 @@ const last30DaysHours = computed(() => {
   return formatHours(last30DaysSeconds.value)
 })
 
-const currentStreak = computed(() => {
-  const records = statsStore.records.filter(r => r.type === 'focus')
-  if (records.length === 0) return 0
-
-  const focusDays = new Set<string>()
-  records.forEach(r => {
-    const d = new Date(r.completedAt)
-    d.setHours(0, 0, 0, 0)
-    focusDays.add(d.getTime().toString())
-  })
-  const sortedDays = Array.from(focusDays).map(Number).sort((a, b) => b - a)
-
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const todayTs = today.getTime()
-
-  let checkDate = sortedDays[0] === todayTs ? todayTs : todayTs - 86400000
-  if (!focusDays.has(checkDate.toString())) return 0
-
-  let streak = 0
-  while (focusDays.has(checkDate.toString())) {
-    streak++
-    checkDate -= 86400000
-  }
-  return streak
-})
+// [P0-2 修复] 统一连胜数据源：直接读 timerStore.streakCount（持久化的 streakData，跨月正确）
+// 之前的实现从 records 计算，但 records 只保留 30 天（stats.ts cleanupOldRecords），
+// 连续使用超过 30 天时连胜会被截断在 30，与庆祝动画/专注窗口显示的连胜不一致。
+// streakCount 在 timer.ts 内由 complete() 维护 + loadStreakData() 从 streakData 加载。
+const currentStreak = computed(() => timerStore.streakCount)
 
 // 最高连续记录
 const maxStreak = computed(() => {
@@ -258,8 +364,6 @@ async function exportDetailCSV() {
 
   try {
     const now = new Date()
-    const year = now.getFullYear()
-    const yStats = statsStore.yearStats[year] || { count: 0, seconds: 0 }
 
     const lines: string[] = []
     lines.push('提示: 请双击列头分隔线调整列宽以显示完整内容')
@@ -285,13 +389,13 @@ async function exportDetailCSV() {
     const success = await window.electronAPI.dialog.saveCSV(data, `stats-detail-${date}.csv`)
     if (success) {
       console.log('[StatsDisplay] 详细数据 CSV 导出成功')
-      showToast('CSV 数据导出成功！', 'success')
+      toast.success('CSV 数据导出成功！')
     } else {
       console.log('[StatsDisplay] 用户取消导出')
     }
   } catch (e) {
     console.error('[StatsDisplay] CSV 导出失败:', e)
-    showToast('导出失败', 'error')
+    toast.error('导出失败')
   }
 }
 
@@ -306,6 +410,17 @@ const heatmapData = computed(() => {
   // 当月第一天是周几 (0=周日)
   const firstDayOfWeek = new Date(viewYear.value, viewMonth.value, 1).getDay()
 
+  // [P1-4 优化] records 保留期延长到 365 天后数据变大，逐日 filter 全量会 O(天数×条数)。
+  // 改为一次遍历建"按天计数"索引（O(n)），渲染时 O(1) 查表。
+  const dayCount = new Map<number, number>()
+  const monthStart = new Date(viewYear.value, viewMonth.value, 1).getTime()
+  const monthEnd = monthStart + lastDayNum * 86400000
+  for (const r of statsStore.records) {
+    if (r.type !== 'focus' || r.completedAt < monthStart || r.completedAt >= monthEnd) continue
+    const day = Math.floor((r.completedAt - monthStart) / 86400000) + 1
+    dayCount.set(day, (dayCount.get(day) || 0) + 1)
+  }
+
   const result: { date: number; count: number; isCurrentMonth: boolean; isToday: boolean }[][] = []
   let currentRow: { date: number; count: number; isCurrentMonth: boolean; isToday: boolean }[] = []
 
@@ -318,15 +433,10 @@ const heatmapData = computed(() => {
   for (let day = 1; day <= lastDayNum; day++) {
     const date = new Date(viewYear.value, viewMonth.value, day)
     const dayStart = date.getTime()
-    const dayEnd = dayStart + 86400000
-
-    const dayRecords = statsStore.records.filter(r =>
-      r.completedAt >= dayStart && r.completedAt < dayEnd && r.type === 'focus'
-    )
 
     currentRow.push({
       date: day,
-      count: dayRecords.length,
+      count: dayCount.get(day) || 0,
       isCurrentMonth: true,
       isToday: dayStart === todayTime
     })
@@ -348,25 +458,27 @@ const heatmapData = computed(() => {
   return result
 })
 
+// [P1-4 体验] 当前视图月份是否有专注记录（用于空态提示，避免用户误以为数据丢失）
+const hasRecordsThisMonth = computed(() => {
+  const lastDayNum = new Date(viewYear.value, viewMonth.value + 1, 0).getDate()
+  const monthStart = new Date(viewYear.value, viewMonth.value, 1).getTime()
+  const monthEnd = monthStart + lastDayNum * 86400000
+  return statsStore.records.some(
+    r => r.type === 'focus' && r.completedAt >= monthStart && r.completedAt < monthEnd
+  )
+})
+
+// 当前视图月份早于 records 保留窗口（365天）时，说明数据可能已被清理，给出解释
+const isBeforeRetention = computed(() => {
+  const viewStart = new Date(viewYear.value, viewMonth.value, 1).getTime()
+  const retentionCutoff = Date.now() - 365 * 24 * 60 * 60 * 1000
+  return viewStart < retentionCutoff
+})
+
 
 </script>
 
 <template>
-  <Teleport to="body">
-    <Transition name="toast">
-      <div v-if="toastMessage" class="sd-toast" :class="toastType">
-        <svg v-if="toastType === 'success'" class="toast-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
-          <polyline points="20 6 9 17 4 12"/>
-        </svg>
-        <svg v-else class="toast-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
-          <line x1="18" y1="6" x2="6" y2="18"/>
-          <line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
-        <span>{{ toastMessage }}</span>
-      </div>
-    </Transition>
-  </Teleport>
-
   <div class="stats-display">
     <div class="stats-header">
       <button class="detail-btn" @click="showDetail = true" title="查看详细数据">
@@ -398,7 +510,8 @@ const heatmapData = computed(() => {
         <div class="goal-percent">{{ hourGoalPercent }}%</div>
       </div>
       <div class="goal-progress">
-        <div class="goal-progress-fill" :style="{ width: hourGoalPercent + '%' }"></div>
+        <!-- [需求] 进度条视觉满格即停（宽度封顶 100%），百分比数字显示真实值（可超 100%） -->
+        <div class="goal-progress-fill" :style="{ width: Math.min(100, hourGoalPercent) + '%' }"></div>
       </div>
     </div>
 
@@ -593,9 +706,61 @@ const heatmapData = computed(() => {
     <div class="heatmap-container">
       <div class="heatmap-header">
         <button class="nav-btn" @click="prevMonth">&lt;</button>
-        <span class="heatmap-title">{{ viewTitle }}</span>
+        <!-- [热力图日历筛选] 点击标题弹出 modal -->
+        <span class="heatmap-title" :class="{ clickable: true }" @click="openFilter">{{ viewTitle }}</span>
         <button class="nav-btn" @click="nextMonth">&gt;</button>
         <button class="today-btn" @click="goToToday">今</button>
+      </div>
+      <!-- [热力图日历筛选] 居中 modal：左年份右月份滚动选择，点确定才生效 -->
+      <div v-if="showFilter" class="detail-modal" @click.self="showFilter = false">
+        <div class="detail-modal-content filter-modal-content">
+          <div class="detail-modal-header">
+            <h3>选择年月</h3>
+            <button class="close-btn" @click="showFilter = false">×</button>
+          </div>
+          <div class="filter-modal-body">
+            <div class="picker-cols">
+              <!-- 年份滚轮：上/中/下三行，拖动 + 滚轮切换 -->
+              <div class="picker-col">
+                <div
+                  class="picker-wheel"
+                  @wheel.prevent="onWheel($event, 'year')"
+                  @pointerdown="onPointerDown($event, 'year')"
+                  @pointermove="onPointerMove($event, 'year')"
+                  @pointerup="onPointerUp('year')"
+                  @pointerleave="onPointerUp('year')"
+                >
+                  <div class="picker-wheel-inner" :style="{ transform: `translateY(${(1 - yearIndex) * 40}px)` }">
+                    <div v-for="(y, i) in pickerYears" :key="y" class="picker-wheel-item" :class="{ current: i === yearIndex }">
+                      {{ y }}年
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <!-- 月份滚轮 -->
+              <div class="picker-col">
+                <div
+                  class="picker-wheel"
+                  @wheel.prevent="onWheel($event, 'month')"
+                  @pointerdown="onPointerDown($event, 'month')"
+                  @pointermove="onPointerMove($event, 'month')"
+                  @pointerup="onPointerUp('month')"
+                  @pointerleave="onPointerUp('month')"
+                >
+                  <div class="picker-wheel-inner" :style="{ transform: `translateY(${(1 - monthIndex) * 40}px)` }">
+                    <div v-for="(m, i) in pickerMonths" :key="m" class="picker-wheel-item" :class="{ current: i === monthIndex }">
+                      {{ m }}月
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="filter-modal-footer">
+            <button class="filter-cancel" @click="showFilter = false">取消</button>
+            <button class="filter-confirm" @click="confirmFilter">确定</button>
+          </div>
+        </div>
       </div>
       <!-- 星期标签 -->
       <div class="weekday-row">
@@ -609,12 +774,17 @@ const heatmapData = computed(() => {
             :key="di"
             class="calendar-cell"
             :class="{ empty: !day.isCurrentMonth, completed: day.count > 0, today: day.isToday }"
-            :title="day.isCurrentMonth && day.count > 0 ? `${day.date}日: ${day.count}个番茄 / ${(day.count * 25 / 60).toFixed(1)}小时` : (day.isCurrentMonth ? `${day.date}日: 0小时` : '')"
+            :title="day.isCurrentMonth && day.count > 0 ? `${day.date}日: ${day.count}个番茄 / ${(day.count * 25 / 60).toFixed(1)}小时` : (day.isCurrentMonth ? `${day.date}日: 未专注` : '')"
           >
             <span v-if="day.isCurrentMonth" class="day-num">{{ day.isToday ? '今' : day.date }}</span>
             <span v-if="day.isCurrentMonth && day.count > 0" class="check">✓</span>
           </div>
         </div>
+      </div>
+      <!-- [P1-4 体验] 空态提示：无数据月份给出说明，避免误以为数据丢失 -->
+      <div v-if="!hasRecordsThisMonth" class="heatmap-empty-hint">
+        <template v-if="isBeforeRetention">📅 此月份暂未显示记录</template>
+        <template v-else>📅 此月份暂无专注记录</template>
       </div>
     </div>
   </div>
@@ -626,77 +796,6 @@ const heatmapData = computed(() => {
   flex-direction: column;
   gap: 8px;
   padding: 8px 16px 16px;
-}
-
-.sd-toast {
-  position: fixed;
-  top: 60px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
-  padding: 10px 18px;
-  border-radius: 24px;
-  font-size: 13px;
-  font-family: 'DM Sans', sans-serif;
-  font-weight: 500;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  z-index: 10000;
-  pointer-events: none;
-}
-
-.sd-toast.success {
-  border-color: rgba(46, 204, 113, 0.4);
-  color: #2ecc71;
-}
-
-.sd-toast.success .toast-icon {
-  color: #2ecc71;
-}
-
-.sd-toast.error {
-  border-color: rgba(231, 76, 60, 0.4);
-  color: #e74c3c;
-}
-
-.sd-toast.error .toast-icon {
-  color: #e74c3c;
-}
-
-[data-theme="light"] .sd-toast {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
-
-[data-theme="light"] .sd-toast.success {
-  background: rgba(46, 204, 113, 0.08);
-  border-color: rgba(46, 204, 113, 0.4);
-  color: #27ae60;
-}
-
-[data-theme="light"] .sd-toast.error {
-  background: rgba(231, 76, 60, 0.08);
-  border-color: rgba(231, 76, 60, 0.4);
-  color: #c0392b;
-}
-
-.toast-enter-active,
-.toast-leave-active {
-  transition: all 0.3s ease;
-}
-
-.toast-enter-from {
-  opacity: 0;
-  transform: translateX(-50%) translateY(-20px);
-}
-
-.toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(-20px);
 }
 
 .stats-header {
@@ -1229,6 +1328,7 @@ const heatmapData = computed(() => {
   border-radius: 16px;
   padding: 16px;
   box-shadow: 0 2px 12px var(--shadow);
+  position: relative;
 }
 
 .heatmap-header {
@@ -1279,6 +1379,114 @@ const heatmapData = computed(() => {
 
 .today-btn:hover {
   background: rgba(231, 76, 60, 0.3);
+}
+
+/* [热力图日历筛选] 标题可点击 */
+.heatmap-title.clickable {
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+  padding: 2px 6px;
+}
+.heatmap-title.clickable:hover {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+}
+
+/* [热力图日历筛选] 居中 modal 内筛选选项 */
+.filter-modal-body {
+  padding: 4px 0 8px;
+}
+.filter-modal-content {
+  max-width: 340px;
+}
+/* 滚轮选择器：左右两列，每列 3 行滚轮（上/中/下） */
+.picker-cols {
+  display: flex;
+  gap: 40px;
+  justify-content: center;
+  align-items: stretch;
+}
+.picker-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+/* 滚轮容器：单行高 40，共显示 3 行（120px），overflow 裁剪 */
+.picker-wheel {
+  width: 100px;
+  height: 120px;
+  overflow: hidden;
+  position: relative;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.picker-wheel:active {
+  cursor: grabbing;
+}
+/* 内部轨道：所有值纵向排布，translateY 平移让当前值居中 */
+.picker-wheel-inner {
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  will-change: transform;
+}
+.picker-wheel-item {
+  flex-shrink: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  font-family: 'DM Serif Display', serif;
+  transition: all 0.18s;
+}
+/* 当前选中行：居中加粗放大 */
+.picker-wheel-item.current {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+/* 底部按钮 */
+.filter-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+.filter-modal-footer .filter-cancel,
+.filter-modal-footer .filter-confirm {
+  padding: 7px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1px solid var(--border-color);
+}
+.filter-modal-footer .filter-cancel {
+  background: transparent;
+  color: var(--text-secondary);
+}
+.filter-modal-footer .filter-cancel:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+.filter-modal-footer .filter-confirm {
+  background: var(--tomato);
+  border-color: var(--tomato);
+  color: #fff;
+  font-weight: 600;
+}
+.filter-modal-footer .filter-confirm:hover {
+  background: var(--tomato-dark);
 }
 
 .weekday-row {
@@ -1339,6 +1547,17 @@ const heatmapData = computed(() => {
 .calendar-cell.today .day-num {
   color: #e74c3c;
   font-weight: 600;
+}
+
+/* [P1-4 体验] 空月份提示 */
+.heatmap-empty-hint {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--bg-secondary, rgba(0,0,0,0.04));
+  color: var(--text-muted, #999);
+  font-size: 12px;
+  text-align: center;
 }
 
 .day-num {

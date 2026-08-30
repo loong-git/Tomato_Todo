@@ -18,23 +18,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   audio: {
     play: (filePath: string) => ipcRenderer.invoke('audio:play', filePath),
-    stop: () => ipcRenderer.invoke('audio:stop')
+    stop: () => ipcRenderer.invoke('audio:stop'),
+    // [P2-11 修复] 监听主进程音频播放结束信号（自定义文件播放完毕）
+    onEnd: (callback: () => void) => { ipcRenderer.on('audio:ended', () => callback()) }
   },
   focus: {
-    open: (data: { timeLeft: number; mode: string; isRunning: boolean }) => ipcRenderer.invoke('focus:open', data),
+    open: (data: { timeLeft: number; mode: string; isRunning: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }, mode?: 'compact' | 'fullscreen') =>
+      ipcRenderer.invoke('focus:open', data, mode),
     close: () => ipcRenderer.invoke('focus:close'),
     getInitData: () => ipcRenderer.invoke('focus:getInitData'),
-    sendState: (data: { timeLeft: number; mode: string; isRunning: boolean }) => {
+    sendState: (data: { timeLeft: number; mode: string; isRunning: boolean; justCompleted: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }) => {
       ipcRenderer.send('focus:sendState', data)
     },
-    onStateUpdate: (callback: (data: { timeLeft: number; mode: string; isRunning: boolean }) => void) => {
+    onStateUpdate: (callback: (data: { timeLeft: number; mode: string; isRunning: boolean; justCompleted: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }) => void) => {
       ipcRenderer.on('focus:stateUpdate', (_, data) => callback(data))
-    },
-    onTick: (callback: (data: { timeLeft: number }) => void) => {
-      ipcRenderer.on('focus:tick', (_, data) => callback(data))
-    },
-    onCompleted: (callback: () => void) => {
-      ipcRenderer.on('focus:completed', () => callback())
     },
     onFocusModeChange: (callback: (active: boolean) => void) => {
       ipcRenderer.on('focus:modeChange', (_, active) => callback(active))

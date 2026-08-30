@@ -18,6 +18,13 @@ export interface PomodoroRecord {
 
 export type SoundType = 'bell' | 'forest' | 'ding' | 'tick' | 'custom'
 
+export interface ShortcutConfig {
+  /** 主窗口 → 切全屏专注(在 FocusWindow 内 = 返回主窗口) */
+  toggleFullscreen: string
+  /** 主窗口 → 切小窗专注(在 FocusWindow 内 = 返回主窗口) */
+  toggleCompact: string
+}
+
 export interface Settings {
   focusDuration: number
   shortBreakDuration: number
@@ -31,6 +38,8 @@ export interface Settings {
   soundPath: string
   theme: 'dark' | 'light'
   closeBehavior: 'tray' | 'quit'
+  /** 自定义快捷键(人类可读,如 "Alt+F" / "Ctrl+Shift+M") */
+  shortcuts: ShortcutConfig
 }
 
 export type TimerMode = 'focus' | 'shortBreak' | 'longBreak'

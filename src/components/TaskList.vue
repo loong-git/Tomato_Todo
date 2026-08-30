@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useTaskStore, useTimerStore } from '@/stores'
 import { playCelebrationSound } from '@/utils'
+import { toast } from '@/utils/toast'
 
 const taskStore = useTaskStore()
 const timerStore = useTimerStore()
@@ -118,16 +119,6 @@ function deleteTask(taskId: string) {
 }
 
 const showClearConfirm = ref(false)
-const toastMessage = ref('')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-
-function showToast(message: string) {
-  toastMessage.value = message
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    toastMessage.value = ''
-  }, 2000)
-}
 
 function clearHistory() {
   showClearConfirm.value = true
@@ -140,7 +131,7 @@ function confirmClearHistory() {
   taskIds.forEach(id => taskStore.deleteTask(id))
   showClearConfirm.value = false
   showHistory.value = false
-  showToast(`已清除 ${count} 个历史任务`)
+  toast.info(`已清除 ${count} 个历史任务`)
 }
 
 function unarchiveTask(taskId: string) {
@@ -162,11 +153,6 @@ function deleteArchivedTask(taskId: string) {
 
 <template>
   <div class="task-list">
-    <Teleport to="body">
-      <Transition name="toast">
-        <div v-if="toastMessage" class="toast">{{ toastMessage }}</div>
-      </Transition>
-    </Teleport>
     <div class="add-task">
       <input
         v-model="newTaskName"
@@ -1046,40 +1032,6 @@ function deleteArchivedTask(taskId: string) {
 .confirm-btn.danger:hover {
   background: linear-gradient(135deg, #c0392b, #a93226);
   transform: translateY(-1px);
-}
-
-.toast {
-  position: fixed;
-  top: 60px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
-  padding: 10px 20px;
-  border-radius: 24px;
-  font-size: 13px;
-  font-family: 'DM Sans', sans-serif;
-  font-weight: 500;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  z-index: 10000;
-  pointer-events: none;
-}
-
-.toast-enter-active,
-.toast-leave-active {
-  transition: all 0.3s ease;
-}
-
-.toast-enter-from {
-  opacity: 0;
-  transform: translateX(-50%) translateY(-20px);
-}
-
-.toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(-20px);
 }
 
 .history-empty {

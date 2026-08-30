@@ -5,6 +5,11 @@ import { generateId } from '@/utils'
 
 const ONE_DAY = 24 * 60 * 60 * 1000
 
+// [P1-4 修复] records 明细保留期：30 天 → 365 天
+// 用户在意数据完整性：明细保留满一年，与热力图月份导航匹配，历史月份不空。
+// 取舍：electron-store JSON 变大、saveRecords 全量写入更慢 —— 用户确认接受此代价。
+const RECORD_RETENTION_DAYS = 365
+
 interface LifetimeStats {
   totalCount: number
   totalSeconds: number
@@ -68,7 +73,9 @@ export const useStatsStore = defineStore('stats', () => {
     }
 
     updateCounts()
-    cleanupOldRecords()
+    // [P3-15 修复] 删除 addRecord 内的 cleanupOldRecords()：
+    // 之前每次完成一个番茄都全量 filter records（O(n)），连续多番茄时重复过滤。
+    // 移到 loadRecords() 一次性清理（启动时清理一次足矣），语义正确——完成番茄时不应清理数据。
     saveRecords()
     saveLifetimeStats()
     saveYearStats()
@@ -78,7 +85,7 @@ export const useStatsStore = defineStore('stats', () => {
    * 删除任务时同步清理该任务的所有 records 和统计
    * 按 taskId 找出所有 focus records，删除并减少 lifetimeStats/yearStats
    */
-  function removeRecordsByTaskId(taskId: string) {
+  async function removeRecordsByTaskId(taskId: string) {
     if (!taskId) return
 
     const taskRecords = records.value.filter(r => r.taskId === taskId && r.type === 'focus')
@@ -123,30 +130,65 @@ export const useStatsStore = defineStore('stats', () => {
     updateCounts()
 
     console.log(`[Stats] 删除任务 ${taskId} 清理 ${removedCount} 条 records 累计剩余:${lifetimeStats.value.totalCount}`)
+
+    // [P1-8 修复] 删除任务删了 focus records，连胜可能偏大，用剩余 records 重算写回 streakData
+    // 动态 import 避免 stats ↔ timer 静态循环依赖（timer.ts 顶层已 import stats）
+    // 调用方 deleteTask 是同步函数不 await 这里，内部必须吞掉异常避免未处理 rejection
+    try {
+      const { useTimerStore } = await import('./timer')
+      useTimerStore().recomputeStreakFromRecords()
+    } catch (e) {
+      console.error('[Stats] 重算连胜失败:', e)
+    }
   }
 
   function cleanupOldRecords() {
-    const thirtyDaysAgo = Date.now() - 30 * ONE_DAY
-    records.value = records.value.filter(r => r.completedAt >= thirtyDaysAgo)
+    const cutoff = Date.now() - RECORD_RETENTION_DAYS * ONE_DAY
+    const removed = records.value.length - records.value.filter(r => r.completedAt >= cutoff).length
+    records.value = records.value.filter(r => r.completedAt >= cutoff)
+    if (removed > 0) {
+      console.log(`[Stats] 清理 ${removed} 条超过 ${RECORD_RETENTION_DAYS} 天的 records（保留期已从 30 天延长）`)
+    }
   }
 
   function saveRecords() {
     if (window.electronAPI) {
       const data = JSON.parse(JSON.stringify(records.value))
-      window.electronAPI.store.set('records', data)
+      window.electronAPI.store.set('records', data).catch((e: unknown) => {
+        // [P0-3 修复] 记录持久化失败必须可见
+        console.error('[Stats] 保存 records 失败:', e)
+      })
     }
   }
 
   function saveLifetimeStats() {
     if (window.electronAPI) {
-      window.electronAPI.store.set('lifetimeStats', JSON.parse(JSON.stringify(lifetimeStats.value)))
+      window.electronAPI.store.set('lifetimeStats', JSON.parse(JSON.stringify(lifetimeStats.value))).catch((e: unknown) => {
+        // [P0-3 修复] 累计统计持久化失败必须可见
+        console.error('[Stats] 保存 lifetimeStats 失败:', e)
+      })
     }
   }
 
   function saveYearStats() {
     if (window.electronAPI) {
-      window.electronAPI.store.set('yearStats', JSON.parse(JSON.stringify(yearStats.value)))
+      window.electronAPI.store.set('yearStats', JSON.parse(JSON.stringify(yearStats.value))).catch((e: unknown) => {
+        // [P0-3 修复] 年度统计持久化失败必须可见
+        console.error('[Stats] 保存 yearStats 失败:', e)
+      })
     }
+  }
+
+  // [P4-导出导入 修复] 导入端写回累计统计并落盘（避免 lifetimeStats 只在内存改、磁盘残留旧值）
+  function setLifetimeStats(stats: LifetimeStats) {
+    lifetimeStats.value = { ...stats }
+    saveLifetimeStats()
+  }
+
+  // [P4-导出导入 修复] 导入端写回年度统计并落盘
+  function setYearStats(stats: Record<number, YearStat>) {
+    yearStats.value = JSON.parse(JSON.stringify(stats))
+    saveYearStats()
   }
 
   async function loadRecords() {
@@ -159,8 +201,14 @@ export const useStatsStore = defineStore('stats', () => {
 
       if (savedRecords && Array.isArray(savedRecords)) {
         records.value = savedRecords
+        const beforeLen = records.value.length
         cleanupOldRecords()
         updateCounts()
+        // [P1-4 修复] 清理超期 records 后必须落盘，否则 electron-store 残留已清理数据，
+        // 下次启动又会读回（验收时发现的内存/磁盘不一致）。
+        if (records.value.length !== beforeLen) {
+          saveRecords()
+        }
       }
 
       // 始终确保 lifetimeStats 有有效值
@@ -251,6 +299,8 @@ export const useStatsStore = defineStore('stats', () => {
     removeRecordsByTaskId,
     saveRecords,
     loadRecords,
+    setLifetimeStats,
+    setYearStats,
     injectYesterdayData,
     injectHistoryTasks
   }

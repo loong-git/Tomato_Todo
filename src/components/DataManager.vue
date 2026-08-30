@@ -1,21 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useTaskStore } from '@/stores'
+import { toast } from '@/utils/toast'
 
 const taskStore = useTaskStore()
 const showPanel = ref(false)
-const toastMessage = ref('')
-const toastType = ref<'success' | 'error'>('success')
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-
-function showToast(message: string, type: 'success' | 'error' = 'success') {
-  toastMessage.value = message
-  toastType.value = type
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    toastMessage.value = ''
-  }, 2000)
-}
 
 async function exportJSON() {
   if (window.electronAPI) {
@@ -24,11 +13,11 @@ async function exportJSON() {
       const date = new Date().toISOString().slice(0, 10)
       const success = await window.electronAPI.dialog.saveFile(data, `tomato-todo-${date}.json`)
       if (success) {
-        showToast('JSON 数据导出成功！', 'success')
+        toast.success('JSON 数据导出成功！')
       }
     } catch (e) {
       console.error('Export failed:', e)
-      showToast('导出失败', 'error')
+      toast.error('导出失败')
     }
   }
 }
@@ -40,11 +29,11 @@ async function exportCSV() {
       const date = new Date().toISOString().slice(0, 10)
       const success = await window.electronAPI.dialog.saveCSV(data, `tomato-stats-${date}.csv`)
       if (success) {
-        showToast('CSV 数据导出成功！', 'success')
+        toast.success('CSV 数据导出成功！')
       }
     } catch (e) {
       console.error('CSV export failed:', e)
-      showToast('导出失败', 'error')
+      toast.error('导出失败')
     }
   }
 }
@@ -54,7 +43,7 @@ async function importData() {
     const jsonStr = await window.electronAPI.dialog.openJsonFile()
     if (jsonStr) {
       const result = await taskStore.importAllData(jsonStr)
-      showToast(result.message, result.success ? 'success' : 'error')
+      toast.show(result.message, result.success ? 'success' : 'error')
     }
   }
 }
@@ -65,21 +54,6 @@ function toggle() {
 </script>
 
 <template>
-  <Teleport to="body">
-    <Transition name="toast">
-      <div v-if="toastMessage" class="dm-toast" :class="toastType">
-        <svg v-if="toastType === 'success'" class="toast-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
-          <polyline points="20 6 9 17 4 12"/>
-        </svg>
-        <svg v-else class="toast-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
-          <line x1="18" y1="6" x2="6" y2="18"/>
-          <line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
-        <span>{{ toastMessage }}</span>
-      </div>
-    </Transition>
-  </Teleport>
-
   <div class="data-manager">
     <button class="toggle-btn" @click="toggle">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -143,77 +117,6 @@ function toggle() {
 <style scoped>
 .data-manager {
   position: relative;
-}
-
-.dm-toast {
-  position: fixed;
-  top: 60px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
-  padding: 10px 18px;
-  border-radius: 24px;
-  font-size: 13px;
-  font-family: 'DM Sans', sans-serif;
-  font-weight: 500;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  z-index: 10000;
-  pointer-events: none;
-}
-
-.dm-toast.success {
-  border-color: rgba(46, 204, 113, 0.4);
-  color: #2ecc71;
-}
-
-.dm-toast.success .toast-icon {
-  color: #2ecc71;
-}
-
-.dm-toast.error {
-  border-color: rgba(231, 76, 60, 0.4);
-  color: #e74c3c;
-}
-
-.dm-toast.error .toast-icon {
-  color: #e74c3c;
-}
-
-[data-theme="light"] .dm-toast {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
-
-[data-theme="light"] .dm-toast.success {
-  background: rgba(46, 204, 113, 0.08);
-  border-color: rgba(46, 204, 113, 0.4);
-  color: #27ae60;
-}
-
-[data-theme="light"] .dm-toast.error {
-  background: rgba(231, 76, 60, 0.08);
-  border-color: rgba(231, 76, 60, 0.4);
-  color: #c0392b;
-}
-
-.toast-enter-active,
-.toast-leave-active {
-  transition: all 0.3s ease;
-}
-
-.toast-enter-from {
-  opacity: 0;
-  transform: translateX(-50%) translateY(-20px);
-}
-
-.toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(-20px);
 }
 
 .toggle-btn {

@@ -29,6 +29,8 @@ export const useTaskStore = defineStore('task', () => {
 
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
 
+  // 50ms 防抖：原来 500ms 会在用户加任务 → 立即开全屏时产生时序窗口
+  // （主进程 store.get('tasks') 读不到刚加的任务，导致兜底失败）
   function debouncedSave() {
     if (saveTimeout) {
       clearTimeout(saveTimeout)
@@ -36,7 +38,7 @@ export const useTaskStore = defineStore('task', () => {
     saveTimeout = setTimeout(() => {
       saveTasks()
       saveTimeout = null
-    }, 500)
+    }, 50)
   }
 
   function addTask(name: string): Task {
@@ -143,7 +145,11 @@ export const useTaskStore = defineStore('task', () => {
       streakData: {
         streakCount: timerStore.streakCount,
         lastCompletionDate: timerStore.lastCompletionDate
-      }
+      },
+      // [P4-导出导入 修复] 补上累计/年度统计：否则导出→导入后「累计完成番茄/时长/年度统计」丢失
+      // （lifetimeStats 是永久累加，含已清理 records，不能靠 records 重算，必须独立字段）
+      lifetimeStats: JSON.parse(JSON.stringify(statsStore.lifetimeStats)),
+      yearStats: JSON.parse(JSON.stringify(statsStore.yearStats))
     }
     return JSON.stringify(data, null, 2)
   }
@@ -191,13 +197,11 @@ export const useTaskStore = defineStore('task', () => {
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
     const weekStart = todayStart - 7 * 24 * 60 * 60 * 1000
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
-    const yearStart = new Date(now.getFullYear(), 0, 1).getTime()
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
 
     const todayRecords = statsStore.records.filter(r => r.completedAt >= todayStart && r.type === 'focus')
     const weekRecords = statsStore.records.filter(r => r.completedAt >= weekStart && r.type === 'focus')
     const monthRecords = statsStore.records.filter(r => r.completedAt >= monthStart && r.type === 'focus')
-    const yearRecords = statsStore.records.filter(r => r.completedAt >= yearStart && r.type === 'focus')
     const last30Records = statsStore.records.filter(r => r.completedAt >= thirtyDaysAgo && r.type === 'focus')
 
     const sumMinutes = (arr: typeof statsStore.records) => Math.round(arr.reduce((s, r) => s + r.duration, 0) / 60)
@@ -338,6 +342,34 @@ export const useTaskStore = defineStore('task', () => {
         settingsStore.saveSettings()
       }
 
+      // [P4-导出导入 修复] 导入累计/年度统计（覆盖模式直接替换；merge 模式取导入值，因为统计是整体累加值）
+      // lifetimeStats/yearStats 是永久累加，含已清理 records，导入必须原样写回，否则统计丢失
+      if (data.lifetimeStats && typeof data.lifetimeStats === 'object') {
+        statsStore.setLifetimeStats(data.lifetimeStats)
+      }
+      if (data.yearStats && typeof data.yearStats === 'object') {
+        statsStore.setYearStats(data.yearStats)
+      }
+
+      // [P4-导出导入 修复] 导入连胜数据（streakData 之前漏导入导致连续记录对不上）
+      if (data.streakData && typeof data.streakData === 'object') {
+        const { useTimerStore } = await import('./timer')
+        const timerStore = useTimerStore()
+        timerStore.streakCount = typeof data.streakData.streakCount === 'number'
+          ? data.streakData.streakCount
+          : timerStore.streakCount
+        if (typeof data.streakData.lastCompletionDate === 'string' && data.streakData.lastCompletionDate) {
+          timerStore.lastCompletionDate = data.streakData.lastCompletionDate
+        }
+        // 落盘持久化（timer store 的 saveStreakData 是私有，通过 window.electronAPI 写）
+        if (window.electronAPI) {
+          window.electronAPI.store.set('streakData', {
+            streakCount: timerStore.streakCount,
+            lastCompletionDate: timerStore.lastCompletionDate
+          }).catch((e: unknown) => console.error('[Task] 导入保存 streakData 失败:', e))
+        }
+      }
+
       const taskCount = Array.isArray(data.tasks) ? data.tasks.length : 0
       const recordCount = Array.isArray(data.records) ? data.records.length : 0
 
@@ -354,7 +386,10 @@ export const useTaskStore = defineStore('task', () => {
   function saveTasks() {
     if (window.electronAPI) {
       const data = JSON.parse(JSON.stringify(tasks.value))
-      window.electronAPI.store.set('tasks', data)
+      window.electronAPI.store.set('tasks', data).catch((e: unknown) => {
+        // [P0-3 修复] 任务持久化失败必须可见，否则添加/完成/删除任务后数据静默丢失
+        console.error('[Task] 保存 tasks 失败:', e)
+      })
     }
   }
 

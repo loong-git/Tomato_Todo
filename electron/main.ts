@@ -3,11 +3,33 @@ import { join } from 'path'
 import { readFileSync, writeFileSync, appendFileSync } from 'fs'
 import Store from 'electron-store'
 
+// Windows 下修复中文乱码：将控制台代码页切换到 UTF-8 (65001)
+// 必须在任何 console.log 之前执行，否则源码里的中文日志会按 GBK 解码乱码
+if (process.platform === 'win32') {
+  try {
+    // shell: true 确保 chcp 在 cmd 解释器下运行（避免 spawn EINVAL）
+    // stdio: 'ignore' 屏蔽 "Active code page: 65001" 输出，避免污染日志
+    require('child_process').spawnSync('chcp', ['65001'], {
+      stdio: 'ignore',
+      shell: true
+    })
+  } catch (e) {
+    // 切换失败也继续运行，不阻塞主流程
+  }
+}
+
 // 设置 Windows 通知显示的应用名称
 app.setAppUserModelId('番茄TODO')
 
 // 设置 Electron 用户数据目录到项目根目录的 data 文件夹
 app.setPath('userData', join(__dirname, '../../data'))
+
+// [测试钩子] 开发模式下通过 CDP 远程驱动渲染进程做自动化验收。
+// 仅在显式设置环境变量时启用，生产构建不带该 env，无任何副作用。
+// 用法: REMOTE_DEBUG_PORT=9222 npm run dev → 连接 http://localhost:9222
+if (process.env.REMOTE_DEBUG_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.REMOTE_DEBUG_PORT)
+}
 
 // 确保单实例运行
 const gotTheLock = app.requestSingleInstanceLock()
@@ -16,6 +38,10 @@ if (!gotTheLock) {
 }
 
 app.on('second-instance', () => {
+  if (focusWindow && !focusWindow.isDestroyed()) {
+    // 走 closed 事件统一清理
+    focusWindow.close()
+  }
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
@@ -28,8 +54,20 @@ const store = new Store()
 let mainWindow: BrowserWindow | null = null
 let focusWindow: BrowserWindow | null = null
 let tray: Tray | null = null
-let sharedTimerState = { timeLeft: 25 * 60, mode: 'focus', isRunning: false, justCompleted: false, total: 25 * 60 }
+let sharedTimerState = { timeLeft: 25 * 60, mode: 'focus', isRunning: false, justCompleted: false, total: 25 * 60, currentTaskName: '', currentTaskIds: [] as string[] }
 let isQuitting = false
+
+// 专注窗口状态机（单一权威源）
+type FocusWindowState =
+  | { kind: 'closed' }
+  | { kind: 'open'; mode: 'compact' | 'fullscreen' }
+let focusState: FocusWindowState = { kind: 'closed' }
+
+// 关闭动画意图（与结构状态正交）
+let closeAnimationNeeded = false
+
+// 并发打开守卫（连续 Alt+F 保护）
+let pendingFocusOpen = false
 
 // 日志写入文件
 const logFile = join(__dirname, '../../log.txt')
@@ -168,6 +206,8 @@ function createWindow() {
     height: 700,
     minWidth: 360,
     minHeight: 600,
+    // 窗口图标（dev 模式下让 Alt+Tab 切换和任务栏预览显示番茄；任务栏本身的图标由 .exe 决定，dev 模式改不了）
+    icon: join(__dirname, '../../icon.ico'),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -205,6 +245,20 @@ app.whenReady().then(() => {
       createWindow()
     }
   })
+
+  // ===== 临时：监听 mainWindow/focusWindow 渲染进程的 console.log =====
+  if (mainWindow) {
+    mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+      fileLog(`[MAIN_RENDER] ${message} (${sourceId}:${line})`)
+    })
+  }
+  // mainWindow destroyed 监听
+  if (mainWindow) {
+    mainWindow.webContents.on('destroyed', () => {
+      fileLog(`[MAIN] ⚠️ mainWindow.webContents destroyed!`)
+    })
+  }
+
 })
 
 app.on('window-all-closed', () => {
@@ -239,12 +293,13 @@ ipcMain.on('window:bringToFront', () => {
   console.log('[Window] 切换到前台')
   if (mainWindow) {
     if (focusWindow && !focusWindow.isDestroyed()) {
+      // 走 closed 事件统一清理
       focusWindow.close()
-      focusWindow = null
     }
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
     mainWindow.focus()
+    mainWindow.webContents.send('focus:modeChange', false)
     console.log('[Window] mainWindow 显示到前台')
   }
 })
@@ -370,6 +425,14 @@ ipcMain.handle('audio:play', (_, filePath: string) => {
 
         currentPlayer.on('close', () => {
           currentPlayer = null
+          console.log('[Audio] player closed')
+          // [P2-11 修复] 音频播放结束通知渲染进程，停止音频按钮据此自动隐藏
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            console.log('[Audio] sending audio:ended to mainWindow')
+            mainWindow.webContents.send('audio:ended')
+          } else {
+            console.log('[Audio] mainWindow not available, skip send')
+          }
         })
       } else if (process.platform === 'darwin') {
         const { exec } = require('child_process')
@@ -393,86 +456,254 @@ ipcMain.handle('audio:play', (_, filePath: string) => {
 })
 
 ipcMain.handle('audio:stop', () => {
-  try {
-    if (currentPlayer) {
+  return new Promise((resolve) => {
+    try {
+      // [P2-11 修复] 无条件清理所有 wmplayer 残留实例，且等 taskkill 完成后再 resolve：
+      // - 之前只在 currentPlayer 非空时 taskkill，若上次播放残留（单实例转发/异常挂起）未清掉，
+      //   下次播放会因单实例机制转发命令，导致 audio:ended 时序错乱（渲染进程 isAudioPlaying 卡 true）。
+      // - taskkill 异步，若在回调完成前 resolve，渲染进程立即 playSound 会撞上旧实例被杀的窗口期，
+      //   又触发单实例转发。等 taskkill 完成再 resolve，保证下一次播放绝对干净。
       if (process.platform === 'win32') {
         const { exec } = require('child_process')
-        exec('taskkill /F /IM wmplayer.exe', { windowsHide: true })
+        exec('taskkill /F /IM wmplayer.exe', { windowsHide: true }, () => {
+          currentPlayer = null
+          resolve(true)
+        })
       } else if (process.platform === 'darwin') {
         const { exec } = require('child_process')
-        exec('pkill afplay')
+        exec('pkill afplay', () => {
+          currentPlayer = null
+          resolve(true)
+        })
+      } else {
+        currentPlayer = null
+        resolve(true)
       }
+    } catch (e) {
+      console.error('Failed to stop audio:', e)
       currentPlayer = null
-      return true
+      resolve(false)
     }
-    return false
-  } catch (e) {
-    console.error('Failed to stop audio:', e)
-    return false
+  })
+})
+
+// 从 store 中读 tasks，根据 currentTaskIds 计算 currentTaskName
+function resolveCurrentTaskName(currentTaskIds: string[]): string {
+  if (!currentTaskIds?.length) return ''
+  const tasks = store.get('tasks', []) as { id: string; name: string }[]
+  const task = tasks.find(t => t.id === currentTaskIds[0])
+  return task?.name || ''
+}
+
+ipcMain.handle('focus:open', (_, data: { timeLeft: number; mode: string; isRunning: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }, mode?: 'compact' | 'fullscreen') => {
+  const targetMode = mode || 'compact'
+  // 兜底：主进程用 currentTaskIds 重新计算 currentTaskName（数据源是 store 里的 tasks）
+  if (data.currentTaskIds) {
+    const resolved = resolveCurrentTaskName(data.currentTaskIds)
+    if (resolved) {
+      data.currentTaskName = resolved
+    }
   }
+  fileLog(`[Focus] IPC focus:open, mode=${targetMode}, currentTaskName="${data.currentTaskName}", currentTaskIds=${JSON.stringify(data.currentTaskIds)}`)
+  console.log('[Focus] IPC focus:open, mode:', targetMode, 'data:', JSON.stringify(data))
+  openFocusWindow(targetMode, data)
 })
 
-ipcMain.handle('focus:open', (_, data: { timeLeft: number; mode: string; isRunning: boolean; total: number }) => {
-  if (!mainWindow || focusWindow) return
+// 打开专注窗口的内部函数（被 focus:open 共用）
+async function openFocusWindow(mode: 'compact' | 'fullscreen', data?: { timeLeft: number; mode: string; isRunning: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }) {
+  // 状态守门
+  if (focusState.kind === 'open' || pendingFocusOpen) {
+    fileLog(`[Focus] openFocusWindow 已在打开中或已打开,忽略本次请求 (state=${JSON.stringify(focusState)})`)
+    return
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    fileLog('[Focus] openFocusWindow 失败: mainWindow 不可用')
+    return
+  }
+  if (data) sharedTimerState = data
+  fileLog(`[Focus] openFocusWindow 入口 → data.timeLeft=${data?.timeLeft} data.isRunning=${data?.isRunning} mode=${mode} sharedTimerState.timeLeft=${sharedTimerState.timeLeft}`)
 
-  // 保存初始数据
-  sharedTimerState = data
+  pendingFocusOpen = true
+  let newWindow: BrowserWindow | null = null
+  let isFullscreen = mode === 'fullscreen'
 
-  // 获取屏幕尺寸
-  const { screen } = require('electron')
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: screenWidth } = primaryDisplay.workAreaSize
+  try {
+    const { screen } = require('electron')
+    const display = screen.getPrimaryDisplay()
+    const { width: sw, height: sh } = display.workAreaSize
 
-  // 放在屏幕右上角，距离边缘 20px
-  const focusWidth = 250
-  const focusHeight = 250
-  const focusX = screenWidth - focusWidth - 20
-  const focusY = 20
+    // 隐藏主窗口
+    mainWindow.hide()
+    mainWindow.webContents.send('focus:modeChange', true)
+    fileLog(`[Focus] mainWindow.hide() 后 → 即将创建 focusWindow, mode=${mode}`)
 
-  mainWindow.hide()
-
-  // 通知主窗口进入专注模式，停止本地计时器
-  mainWindow.webContents.send('focus:modeChange', true)
-
-  // 创建专注窗口，可调节大小
-  focusWindow = new BrowserWindow({
-    width: focusWidth,
-    height: focusHeight,
-    x: focusX,
-    y: focusY,
-    minWidth: 150,
-    minHeight: 150,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: true,
-    webPreferences: {
-      preload: join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false
+    // 准备 BrowserWindow 配置
+    const winConfig: any = {
+      minWidth: 150,
+      minHeight: 150,
+      // 专注窗口图标（同样，dev 模式下改任务栏图标无能为力，只能让窗口本身有图标）
+      icon: join(__dirname, '../../icon.ico'),
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: true,
+      webPreferences: {
+        preload: join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false
+      }
     }
-  })
 
-  const focusUrl = process.env.VITE_DEV_SERVER_URL
-    ? `${process.env.VITE_DEV_SERVER_URL}#/focus`
-    : `file://${join(__dirname, '../dist/index.html')}#/focus`
+    if (isFullscreen) {
+      winConfig.width = sw
+      winConfig.height = sh
+      winConfig.x = 0
+      winConfig.y = 0
+      // 全屏专注模式禁止拖动 + 禁止调整大小(只允许 Alt+F 或左上 × 返回主窗口)
+      winConfig.movable = false
+      winConfig.resizable = false
+    } else {
+      winConfig.width = 250
+      winConfig.height = 250
+      winConfig.x = sw - 270
+      winConfig.y = 20
+    }
 
-  focusWindow.loadURL(focusUrl)
-  focusWindow.setIgnoreMouseEvents(false)
-  focusWindow.webContents.setBackgroundThrottling(false)
+    newWindow = new BrowserWindow(winConfig)
 
-  // 不再自动发送，让Focus窗口onMounted时主动请求
-  focusWindow.on('closed', () => {
-    focusWindow = null
-    if (mainWindow) {
+    const focusUrl = process.env.VITE_DEV_SERVER_URL
+      ? `${process.env.VITE_DEV_SERVER_URL}#/focus`
+      : `file://${join(__dirname, '../dist/index.html')}#/focus`
+
+    newWindow.loadURL(focusUrl)
+    newWindow.webContents.setBackgroundThrottling(false)
+
+    // 注册 closed 事件（统一清理点）
+    newWindow.on('closed', () => {
+      // 仅在 newWindow 仍是当前 focusWindow 时清理,防 stale 引用
+      if (focusWindow === newWindow) {
+        focusWindow = null
+      }
+      const prevMode = focusState.kind === 'open' ? focusState.mode : 'unknown'
+      if (focusState.kind === 'open') {
+        focusState = { kind: 'closed' }
+      }
+      fileLog(`[Focus] 状态转换: open(${prevMode}) → closed`)
+
+      // 恢复主窗口
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (closeAnimationNeeded) {
+          animateMainWindowRestore(mainWindow)
+        } else {
+          mainWindow.show()
+        }
+        mainWindow.webContents.send('focus:modeChange', false)
+      }
+      closeAnimationNeeded = false
+    })
+
+    // 加载失败日志(不会触发 closed,需要单独处理)
+    newWindow.webContents.on('did-fail-load', (_e, code, desc) => {
+      fileLog(`[Focus] ⚠️ focusWindow did-fail-load: code=${code} desc=${desc}`)
+    })
+
+    // 加载完成事件
+    newWindow.webContents.on('did-finish-load', () => {
+      fileLog(`[Focus] focusWindow did-finish-load → 共享 timeLeft=${sharedTimerState.timeLeft} isRunning=${sharedTimerState.isRunning}`)
+      // 推迟到 did-finish-load 之后,避免 loadURL 未完成时 setFullScreen 触发 webContents 重建
+      if (isFullscreen && newWindow && !newWindow.isDestroyed()) {
+        if (newWindow.isFullScreen()) {
+          fileLog(`[Focus] setFullScreen(true) 已被用户/系统切换,跳过`)
+          return
+        }
+        if (newWindow.webContents.isCrashed() || !newWindow.isVisible()) {
+          fileLog(`[Focus] setFullScreen(true) 跳过:webContents 异常或窗口不可见`)
+          return
+        }
+        fileLog(`[Focus] 推迟 setFullScreen(true) (loadURL 后)`)
+        newWindow.setFullScreen(true)
+      }
+    })
+
+    // webContents 重建监听
+    newWindow.webContents.on('destroyed', () => {
+      fileLog(`[Focus] ⚠️ focusWindow.webContents destroyed!`)
+    })
+
+    // 提交状态(必须在所有 listener 注册完成后)
+    focusWindow = newWindow
+    focusState = { kind: 'open', mode }
+    fileLog(`[Focus] 状态转换: closed → open(${mode})`)
+  } catch (e) {
+    // 回滚:销毁半成品窗口,恢复主窗口
+    fileLog(`[Focus] openFocusWindow 失败,回滚: ${e instanceof Error ? e.message : String(e)}`)
+    if (newWindow && !newWindow.isDestroyed()) {
+      newWindow.destroy()
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show()
+      mainWindow.webContents.send('focus:modeChange', false)
     }
-  })
-})
+    pendingFocusOpen = false
+    throw e
+  } finally {
+    pendingFocusOpen = false
+  }
+}
+
+// 从 compact(250x250 角落位置)放大回主窗口(400x700 居中)动画
+function animateMainWindowRestore(targetWindow: BrowserWindow) {
+  const { screen } = require('electron')
+  const display = screen.getPrimaryDisplay()
+  const { width: sw, height: sh } = display.workAreaSize
+
+  const targetW = 400
+  const targetH = 700
+  const targetX = Math.round((sw - targetW) / 2)
+  const targetY = Math.round((sh - targetH) / 2)
+
+  const startW = 250
+  const startH = 250
+
+  targetWindow.setBounds({
+    x: targetX,
+    y: targetY,
+    width: startW,
+    height: startH
+  }, false)
+  targetWindow.show()
+
+  const duration = 300
+  const startTime = Date.now()
+  function easeOutCubic(t: number) {
+    return 1 - Math.pow(1 - t, 3)
+  }
+  function animate() {
+    const elapsed = Date.now() - startTime
+    const progress = Math.min(elapsed / duration, 1)
+    const eased = easeOutCubic(progress)
+    targetWindow.setBounds({
+      x: targetX,
+      y: targetY,
+      width: Math.round(startW + (targetW - startW) * eased),
+      height: Math.round(startH + (targetH - startH) * eased)
+    }, false)
+    if (progress < 1) {
+      setTimeout(animate, 16)
+    }
+  }
+  animate()
+  fileLog('[Focus] 主窗口恢复动画启动 (250x250 → 400x700, 300ms)')
+}
 
 ipcMain.handle('focus:getInitData', () => {
-  return sharedTimerState
+  const focusMode: 'compact' | 'fullscreen' | null = focusState.kind === 'open' ? focusState.mode : null
+  fileLog(`[Focus] getInitData → timeLeft=${sharedTimerState.timeLeft} isRunning=${sharedTimerState.isRunning} currentTaskName="${sharedTimerState.currentTaskName}" focusMode=${focusMode}`)
+  return {
+    ...sharedTimerState,
+    focusMode
+  }
 })
 
 ipcMain.handle('focus:updateState', (_, data: { timeLeft: number; mode: string; isRunning: boolean }) => {
@@ -484,7 +715,14 @@ ipcMain.on('focus:getState', (event) => {
   event.returnValue = sharedTimerState
 })
 
-ipcMain.on('focus:sendState', (event, data) => {
+ipcMain.on('focus:sendState', (event, data: { timeLeft: number; mode: string; isRunning: boolean; justCompleted: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }) => {
+  // 兜底：用主进程视角重新计算 currentTaskName
+  if (data.currentTaskIds) {
+    const resolved = resolveCurrentTaskName(data.currentTaskIds)
+    if (resolved) {
+      data.currentTaskName = resolved
+    }
+  }
   // 同步所有状态
   sharedTimerState = data
   fileLog(`[主→专注] timeLeft:${data.timeLeft} isRunning:${data.isRunning}`)
@@ -499,67 +737,18 @@ ipcMain.on('focus:sendState', (event, data) => {
 })
 
 ipcMain.handle('focus:close', () => {
-  if (!mainWindow || !focusWindow) return
+  // 状态守门
+  if (focusState.kind !== 'open' || !focusWindow || focusWindow.isDestroyed()) {
+    fileLog(`[Focus] focus:close 忽略: focusState=${JSON.stringify(focusState)} focusWindow=${!!focusWindow}`)
+    return
+  }
 
-  const { screen } = require('electron')
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
-
-  // 目标：屏幕居中
-  const targetWidth = 400
-  const targetHeight = 700
-  const targetX = Math.round((screenWidth - targetWidth) / 2)
-  const targetY = Math.round((screenHeight - targetHeight) / 2)
-
-  // 从当前小窗口位置放大回原始大小
-  const startWidth = 250
-  const startHeight = 250
-
+  closeAnimationNeeded = true
+  // 先退出全屏（如果处于全屏状态），避免动画异常
+  if (focusWindow.isFullScreen()) {
+    fileLog('[Focus] close: 退出全屏状态')
+    focusWindow.setFullScreen(false)
+  }
+  // 触发 closed 事件,所有状态清理与动画在那里统一执行
   focusWindow.close()
-  focusWindow = null
-
-  if (mainWindow) {
-    mainWindow.setBounds({
-      x: targetX,
-      y: targetY,
-      width: startWidth,
-      height: startHeight
-    }, false)
-    mainWindow.show()
-
-    // 通知主窗口退出专注模式，恢复本地计时器
-    mainWindow.webContents.send('focus:modeChange', false)
-
-    const duration = 300
-    const startTime = Date.now()
-
-    function easeOutCubic(t) {
-      return 1 - Math.pow(1 - t, 3)
-    }
-
-    function animate() {
-      const elapsed = Date.now() - startTime
-      const progress = Math.min(elapsed / duration, 1)
-      const eased = easeOutCubic(progress)
-
-      mainWindow.setBounds({
-        x: targetX,
-        y: targetY,
-        width: Math.round(startWidth + (targetWidth - startWidth) * eased),
-        height: Math.round(startHeight + (targetHeight - startHeight) * eased)
-      }, false)
-
-      if (progress < 1) {
-        setTimeout(animate, 16)
-      }
-    }
-
-    animate()
-  }
-})
-
-ipcMain.on('focus:update', (event, data) => {
-  if (focusWindow && !focusWindow.isDestroyed()) {
-    focusWindow.webContents.send('focus:update', data)
-  }
 })

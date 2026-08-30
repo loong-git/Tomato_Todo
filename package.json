@@ -4,11 +4,14 @@
   "description": "番茄TODO时钟 - 基于番茄工作法的时间管理应用",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build && electron-builder",
+    "dev": "chcp 65001 >nul & vite",
+    "build:zip": "vue-tsc --noEmit && vite build && electron-builder --win zip && node scripts/clean-release.js",
+    "build:portable": "vue-tsc --noEmit && vite build && electron-builder --win portable && node scripts/clean-release.js",
+    "build:all": "vue-tsc --noEmit && vite build && electron-builder --win && node scripts/clean-release.js",
     "build:vite": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "electron:dev": "vite"
+    "electron:dev": "chcp 65001 >nul & vite",
+    "postinstall": "node scripts/patch-app-builder.js"
   },
   "dependencies": {
     "@vueuse/core": "^10.9.0",
@@ -22,6 +25,7 @@
     "electron": "^28.2.5",
     "electron-builder": "^24.13.3",
     "png-to-ico": "^3.0.1",
+    "rcedit": "^5.0.1",
     "sharp": "^0.34.5",
     "typescript": "^5.4.2",
     "vite": "^5.1.6",
@@ -30,13 +34,52 @@
     "vue-tsc": "^2.0.6"
   },
   "build": {
-    "icon": "./icon",
+    "appId": "com.tomato.todo",
+    "productName": "番茄TODO时钟",
+    "icon": "build/icon.ico",
+    "afterPack": "scripts/after-pack.js",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
     "files": [
-      "dist/**/*",
-      "dist-electron/**/*"
+      "dist/index.html",
+      "dist/assets/**/*",
+      "dist-electron/**/*",
+      "package.json",
+      "!**/*.map"
     ],
     "win": {
-      "sign": false
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
     }
   }
 }

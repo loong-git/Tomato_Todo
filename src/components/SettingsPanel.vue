@@ -1,12 +1,110 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onUnmounted, toRaw } from 'vue'
 import { useSettingsStore } from '@/stores'
-import type { SoundType } from '@/types'
+import type { SoundType, ShortcutConfig } from '@/types'
+import { eventToShortcut, parseShortcut } from '@/utils'
+import { setShortcutRecording } from '@/utils/shortcut-state'
+import { toast } from '@/utils/toast'
 
 const settingsStore = useSettingsStore()
 const visible = ref(false)
 
 const localSettings = ref({ ...settingsStore.settings })
+
+// 快捷键按录:哪个字段正在录制(空字符串 = 没在录)
+const recordingKey = ref<keyof ShortcutConfig | ''>('')
+// 录制中检测到的冲突提示(空字符串 = 无冲突)
+const recordingConflict = ref<string>('')
+
+// 硬编码的快捷键(用户在 App.vue 里直接 keydown 匹配的,不能和用户自定义的切窗口快捷键冲突)
+const hardcodedShortcuts = [
+  { key: ' ', name: '启动/暂停计时器(Space)' },
+  { key: 'r', name: '重置计时器(R)' },
+  { key: 's', name: '打开设置(S)' },
+  { key: 'n', name: '聚焦任务输入框(N)' },
+  { key: '1', name: '专注模式(1)' },
+  { key: '2', name: '短休息(2)' },
+  { key: '3', name: '长休息(3)' },
+  { key: 'escape', name: '关闭弹窗(Esc)' }
+]
+
+/**
+ * 检查快捷键是否冲突
+ * @param shortcut 候选快捷键字符串(如 'Alt+K')
+ * @param excludeField 当前正在录制的字段(自己的值不参与冲突)
+ * @returns 冲突描述,null 表示无冲突
+ */
+function checkConflict(shortcut: string, excludeField: keyof ShortcutConfig): string | null {
+  // 1. 检查另一个用户可改的 toggle 字段
+  for (const k of Object.keys(localSettings.value.shortcuts) as Array<keyof ShortcutConfig>) {
+    if (k === excludeField) continue
+    if (localSettings.value.shortcuts[k] === shortcut) {
+      const label = k === 'toggleFullscreen' ? '切全屏专注' : '切小窗专注'
+      return `与"${label}"快捷键冲突`
+    }
+  }
+  // 2. 检查 hardcoded(主键 + 至少一个修饰键 → 算冲突;无修饰键 → 不冲突,因为 hardcoded 全是裸键)
+  const parsed = parseShortcut(shortcut)
+  if (!parsed) return null
+  const hasModifier = parsed.alt || parsed.ctrl || parsed.shift || parsed.meta
+  if (!hasModifier) {
+    // 候选快捷键没修饰键 → 可能和裸键冲突
+    for (const h of hardcodedShortcuts) {
+      if (parsed.key === h.key) return `与"${h.name}"冲突`
+    }
+  }
+  return null
+}
+
+function startRecording(key: keyof ShortcutConfig) {
+  recordingKey.value = key
+  recordingConflict.value = ''
+  setShortcutRecording(true)
+  // capture phase 拦截,防止 App.vue / FocusWindow.vue 的 keydown 监听先触发
+  window.addEventListener('keydown', onKeydownCapture, true)
+}
+
+function stopRecording() {
+  recordingKey.value = ''
+  recordingConflict.value = ''
+  setShortcutRecording(false)
+  window.removeEventListener('keydown', onKeydownCapture, true)
+}
+
+function onKeydownCapture(e: KeyboardEvent) {
+  // 单独的 Esc 取消录制
+  if (e.key === 'Escape' && !e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey) {
+    e.preventDefault()
+    e.stopPropagation()
+    stopRecording()
+    return
+  }
+  const shortcut = eventToShortcut(e)
+  if (shortcut) {
+    // 有效的组合键 → 检查冲突
+    e.preventDefault()
+    e.stopPropagation()
+    if (recordingKey.value) {
+      const conflict = checkConflict(shortcut, recordingKey.value)
+      if (conflict) {
+        // 冲突:不写入,显示提示,继续等待
+        recordingConflict.value = conflict
+        return
+      }
+      // 无冲突:接受
+      localSettings.value.shortcuts[recordingKey.value] = shortcut
+    }
+    stopRecording()
+    return
+  }
+  // 无效按键(单字符 / 单独修饰键) → 忽略,继续等待
+  // 候选快捷键必须至少有一个修饰键(eventToShortcut 拒绝裸键)
+}
+
+onUnmounted(() => {
+  // 关闭弹窗时清理录制状态(防止 memory leak)
+  if (recordingKey.value) stopRecording()
+})
 
 const soundPresets = [
   { value: 'bell' as SoundType, label: '铃铛', icon: '🔔' },
@@ -17,18 +115,30 @@ const soundPresets = [
 ]
 
 function open() {
-  localSettings.value = { ...settingsStore.settings }
+  // 深拷贝:切断 localSettings 与 settingsStore 的引用关系
+  // 必须先用 toRaw() 解包 Pinia 的 reactive Proxy,structuredClone 不能直接克隆 Proxy
+  localSettings.value = structuredClone(toRaw(settingsStore.settings))
   visible.value = true
 }
 
 async function save() {
-  await settingsStore.updateSettings(localSettings.value)
-  visible.value = false
+  try {
+    await settingsStore.updateSettings(localSettings.value)
+    visible.value = false
+    toast.success('设置已保存')
+  } catch (e) {
+    // [P3-16 修复] settingsStore.updateSettings 在 store.set 失败时会 reject
+    // （saveSettings 内部 .catch 里 throw），之前裸 await 导致 Unhandled rejection、
+    // 且内存已 mutate 但磁盘未存（reload 后改设置丢失）。失败时不关弹窗让用户重试。
+    console.error('[Settings] 保存失败:', e)
+    toast.error('设置保存失败')
+  }
 }
 
 function reset() {
   settingsStore.resetSettings()
-  localSettings.value = { ...settingsStore.settings }
+  // 同样:toRaw 解包 + structuredClone 深拷贝
+  localSettings.value = structuredClone(toRaw(settingsStore.settings))
 }
 
 function close() {
@@ -215,6 +325,78 @@ defineExpose({ open, close })
                 <span class="toggle-thumb"></span>
               </span>
             </button>
+          </div>
+
+          <details class="shortcut-help">
+            <summary>系统已占用的快捷键</summary>
+            <div class="shortcut-help-list">
+              <div class="shortcut-help-item"><kbd>Space</kbd><span>启动/暂停计时器</span></div>
+              <div class="shortcut-help-item"><kbd>R</kbd><span>重置计时器</span></div>
+              <div class="shortcut-help-item"><kbd>S</kbd><span>打开设置</span></div>
+              <div class="shortcut-help-item"><kbd>N</kbd><span>聚焦任务输入框</span></div>
+              <div class="shortcut-help-item"><kbd>1</kbd><span>专注模式</span></div>
+              <div class="shortcut-help-item"><kbd>2</kbd><span>短休息</span></div>
+              <div class="shortcut-help-item"><kbd>3</kbd><span>长休息</span></div>
+              <div class="shortcut-help-item"><kbd>Esc</kbd><span>关闭弹窗</span></div>
+            </div>
+          </details>
+
+          <div class="setting-item shortcut-item">
+            <div class="setting-label">
+              <span class="label-text">切全屏专注</span>
+              <span class="label-hint">主窗口 → 全屏专注(在专注窗口内 = 返回主窗口)</span>
+            </div>
+            <div class="shortcut-control">
+              <span
+                class="shortcut-value"
+                :class="{
+                  recording: recordingKey === 'toggleFullscreen' && !recordingConflict,
+                  conflict: recordingKey === 'toggleFullscreen' && !!recordingConflict
+                }"
+              >
+                {{
+                  recordingKey === 'toggleFullscreen'
+                    ? (recordingConflict || '按任意组合键…')
+                    : localSettings.shortcuts.toggleFullscreen
+                }}
+              </span>
+              <button
+                class="shortcut-btn"
+                :class="{ recording: recordingKey === 'toggleFullscreen' }"
+                @click="recordingKey === 'toggleFullscreen' ? stopRecording() : startRecording('toggleFullscreen')"
+              >
+                {{ recordingKey === 'toggleFullscreen' ? '取消' : '重录' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="setting-item shortcut-item">
+            <div class="setting-label">
+              <span class="label-text">切小窗专注</span>
+              <span class="label-hint">主窗口 → 小窗专注(在专注窗口内 = 返回主窗口)</span>
+            </div>
+            <div class="shortcut-control">
+              <span
+                class="shortcut-value"
+                :class="{
+                  recording: recordingKey === 'toggleCompact' && !recordingConflict,
+                  conflict: recordingKey === 'toggleCompact' && !!recordingConflict
+                }"
+              >
+                {{
+                  recordingKey === 'toggleCompact'
+                    ? (recordingConflict || '按任意组合键…')
+                    : localSettings.shortcuts.toggleCompact
+                }}
+              </span>
+              <button
+                class="shortcut-btn"
+                :class="{ recording: recordingKey === 'toggleCompact' }"
+                @click="recordingKey === 'toggleCompact' ? stopRecording() : startRecording('toggleCompact')"
+              >
+                {{ recordingKey === 'toggleCompact' ? '取消' : '重录' }}
+              </button>
+            </div>
           </div>
 
           <div class="setting-item">
@@ -635,6 +817,219 @@ defineExpose({ open, close })
   background: rgba(231, 76, 60, 0.2);
   border-color: rgba(231, 76, 60, 0.5);
   color: #e74c3c;
+}
+
+/* 系统快捷键说明(折叠区) */
+.shortcut-help {
+  margin: 8px 0 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(168, 159, 151, 0.15);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.shortcut-help > summary {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #a89f97;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.shortcut-help > summary::-webkit-details-marker {
+  display: none;
+}
+
+.shortcut-help > summary::before {
+  content: '▸';
+  font-size: 11px;
+  color: #a89f97;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+
+.shortcut-help[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.shortcut-help > summary:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #f5f0e8;
+}
+
+.shortcut-help-list {
+  padding: 4px 14px 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 14px;
+  border-top: 1px solid rgba(168, 159, 151, 0.1);
+}
+
+.shortcut-help-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #a89f97;
+}
+
+.shortcut-help-item kbd {
+  display: inline-block;
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: #f5f0e8;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(168, 159, 151, 0.25);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 2px 7px;
+  min-width: 30px;
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* 浅色主题 */
+[data-theme="light"] .shortcut-help {
+  background: rgba(45, 36, 32, 0.04);
+  border-color: rgba(45, 36, 32, 0.12);
+}
+[data-theme="light"] .shortcut-help > summary {
+  color: #6d5f57;
+}
+[data-theme="light"] .shortcut-help > summary::before {
+  color: #6d5f57;
+}
+[data-theme="light"] .shortcut-help > summary:hover {
+  background: rgba(45, 36, 32, 0.06);
+  color: #2d2420;
+}
+[data-theme="light"] .shortcut-help-list {
+  border-top-color: rgba(45, 36, 32, 0.1);
+}
+[data-theme="light"] .shortcut-help-item {
+  color: #6d5f57;
+}
+[data-theme="light"] .shortcut-help-item kbd {
+  color: #2d2420;
+  background: #ffffff;
+  border-color: rgba(45, 36, 32, 0.2);
+}
+
+/* 快捷键设置项 */
+.shortcut-item .setting-label {
+  flex: 1;
+  min-width: 0;
+  padding-right: 16px;
+}
+
+.shortcut-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.shortcut-value {
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: #f5f0e8;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(168, 159, 151, 0.2);
+  border-radius: 6px;
+  padding: 6px 12px;
+  min-width: 110px;
+  text-align: center;
+  transition: all 0.2s;
+  user-select: none;
+  letter-spacing: 0.5px;
+}
+
+.shortcut-value.recording {
+  color: #e74c3c;
+  border-color: #e74c3c;
+  background: rgba(231, 76, 60, 0.1);
+  animation: shortcut-pulse 1.2s ease-in-out infinite;
+}
+
+.shortcut-value.conflict {
+  color: #e74c3c;
+  border-color: #e74c3c;
+  background: rgba(231, 76, 60, 0.15);
+  font-size: 11px;          /* 冲突提示文字较长,缩小字号 */
+  letter-spacing: 0.2px;
+  padding: 6px 8px;
+  min-width: 200px;         /* 给冲突文字留够宽度 */
+  animation: shortcut-shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+@keyframes shortcut-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@keyframes shortcut-shake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(3px); }
+  30%, 50%, 70% { transform: translateX(-5px); }
+  40%, 60% { transform: translateX(5px); }
+}
+
+.shortcut-btn {
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(168, 159, 151, 0.2);
+  border-radius: 6px;
+  color: #a89f97;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.shortcut-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f5f0e8;
+}
+
+.shortcut-btn.recording {
+  background: rgba(231, 76, 60, 0.2);
+  border-color: #e74c3c;
+  color: #e74c3c;
+}
+
+.shortcut-btn.recording:hover {
+  background: rgba(231, 76, 60, 0.3);
+}
+
+/* 浅色主题 */
+[data-theme="light"] .shortcut-value {
+  background: rgba(45, 36, 32, 0.06);
+  border-color: rgba(45, 36, 32, 0.15);
+  color: #2d2420;
+}
+[data-theme="light"] .shortcut-value.recording {
+  color: #c0392b;
+  background: rgba(231, 76, 60, 0.08);
+}
+[data-theme="light"] .shortcut-value.conflict {
+  color: #c0392b;
+  background: rgba(231, 76, 60, 0.12);
+}
+[data-theme="light"] .shortcut-btn {
+  background: #faf8f5;
+  border-color: rgba(45, 36, 32, 0.15);
+  color: #6d5f57;
+}
+[data-theme="light"] .shortcut-btn:hover {
+  background: rgba(45, 36, 32, 0.1);
+  color: #2d2420;
 }
 
 /* 深色主题下图标变亮 */
