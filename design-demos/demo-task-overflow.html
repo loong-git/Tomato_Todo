@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>任务列表溢出方案 Demo · 3 版对比</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'DM Sans', -apple-system, 'Segoe UI', sans-serif;
+    background: #161210;
+    color: #f5f0e8;
+    padding: 36px 44px;
+  }
+  h1 { font-size: 19px; margin-bottom: 6px; }
+  .sub { font-size: 13px; color: #8a827a; margin-bottom: 26px; line-height: 1.7; }
+  .sub b { color: #e74c3c; }
+
+  :root {
+    --tomato: #e74c3c; --tomato-light: #ff6b5b; --tomato-dark: #c0392b;
+    --bg-secondary: #2d2522; --bg-card: rgba(45, 37, 34, 0.85);
+    --text-primary: #faf5f0; --text-secondary: #c4bdb5; --text-muted: #8a827a;
+    --border-color: rgba(168, 159, 151, 0.18);
+    --task-completed-bg: rgba(255,255,255,.03);
+  }
+
+  .cols { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+  .col { width: 300px; }
+  .cap { font-size: 13px; color: #b8afa5; margin-bottom: 5px; }
+  .cap small { color: #6b625a; display: block; margin-top: 2px; font-size: 11.5px; }
+  .badge-tag { display:inline-block; font-size:10px; padding:1px 7px; border-radius:999px; background:rgba(231,76,60,.15); color:var(--tomato-light); border:1px solid rgba(231,76,60,.3); margin-left:6px; }
+
+  /* ===== 任务卡复刻（对齐真实样式） ===== */
+  .task-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 14px 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.4);
+    display: flex; flex-direction: column;
+    position: relative;
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .card-head h3 { font-size: 14px; font-weight: 600; }
+  .goal-badge {
+    font-size: 11px; color: var(--tomato-light);
+    background: rgba(231, 76, 60, 0.12); border: 1px solid rgba(231, 76, 60, 0.25);
+    padding: 2px 9px; border-radius: 999px; font-weight: 600;
+    display: flex; align-items: center; gap: 3px;
+  }
+  .dot-t { width: 9px; height: 9px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ff6b5b, #e74c3c); display:inline-block; }
+  .add-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .add-input {
+    flex: 1; background: rgba(0,0,0,.25); border: 1px solid var(--border-color);
+    border-radius: 9px; padding: 8px 11px; color: var(--text-primary); font-size: 12.5px; outline: none;
+  }
+  .add-input::placeholder { color: var(--text-muted); }
+  .add-btn {
+    width: 34px; height: 34px; border: none; border-radius: 9px;
+    background: var(--tomato); color: #fff; cursor: pointer; font-size: 18px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .date-header { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .date-header::after { content: ''; flex: 1; height: 1px; background: var(--border-color); }
+
+  /* 列表容器：方案差异都在这里 */
+  .task-list { display: flex; flex-direction: column; gap: 6px; }
+  .task-list.scroll { max-height: 186px; overflow-y: auto; padding-right: 4px; }
+  .task-list.scroll::-webkit-scrollbar { width: 5px; }
+  .task-list.scroll::-webkit-scrollbar-thumb { background: rgba(231,76,60,.35); border-radius: 3px; }
+  .task-list.scroll::-webkit-scrollbar-track { background: transparent; }
+
+  /* 任务卡 */
+  .tcard2 {
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 9px 12px; border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    position: relative;
+  }
+  .tcard2.done { background: var(--task-completed-bg); border-color: transparent; }
+  .l1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .l2 { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-muted); }
+  .cb2 { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+         background: #27ae60; color: #fff; display: flex; align-items: center; justify-content: center; }
+  .cb2 svg { width: 10px; height: 10px; }
+  .task-name-wrapper { flex: 1; min-width: 0; }
+  .nm2 { font-size: 13.5px; color: var(--text-primary); font-weight: 500; }
+  .done .nm2 { color: var(--text-muted); font-weight: 400; text-decoration: line-through; text-decoration-color: var(--border-color); }
+  .meta-top { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+  .tag.ok { font-size: 10.5px; padding: 2px 9px; border-radius: 9px; flex-shrink: 0;
+            background: rgba(39,174,96,.15); color: #6fbf83; }
+  .meta { font-size: 11px; color: var(--text-muted); white-space: nowrap; display: flex; align-items: center; gap: 3px; }
+  .meta.done-time { margin-left: auto; }
+  .ticon { width: 13px; height: 13px; flex-shrink: 0; }
+  .acts2 { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .wbtn-done {
+    width: 20px; height: 20px; border: none; border-radius: 50%;
+    background: var(--bg-secondary); color: var(--text-muted); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .wbtn-x { width: 20px; height: 20px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: 50%; }
+
+  /* 底部：显示更多 / 查看全部 */
+  .more-row {
+    margin-top: 8px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    font-size: 11.5px; color: var(--text-muted); cursor: pointer;
+    padding: 7px; border-radius: 8px; border: 1px dashed var(--border-color);
+    transition: all .18s ease;
+    user-select: none;
+  }
+  .more-row:hover { color: var(--tomato-light); border-color: rgba(231,76,60,.4); background: rgba(231,76,60,.05); }
+  .more-row .chev { transition: transform .25s ease; }
+  .more-row.open .chev { transform: rotate(180deg); }
+
+  /* 方案B：弹窗 */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); backdrop-filter: blur(3px);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+  }
+  .overlay.show { display: flex; }
+  .modal {
+    width: 340px; max-height: 70vh; background: #221c19; border: 1px solid var(--border-color);
+    border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  }
+  .modal-head { display: flex; align-items: center; }
+  .modal-head h3 { font-size: 14px; flex: 1; }
+  .modal-x { border: none; background: transparent; color: var(--text-muted); font-size: 18px; cursor: pointer; }
+  .modal-body { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+
+  .hist-btn {
+    margin-top: 8px; padding: 9px; border-radius: 9px;
+    border: 1px dashed var(--border-color); background: transparent;
+    color: var(--text-muted); font-size: 11.5px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .hist-btn:hover { color: var(--tomato-light); border-color: rgba(231,76,60,.4); }
+</style>
+</head>
+<body>
+  <h1>任务列表溢出 · 3 方案对比</h1>
+  <p class="sub">当前问题：任务一多，卡片被撑高，把下方热力条挤出视野（右侧统计卡高度被拉长）。<br>三方案都保持<b>卡片固定高度</b>，区别在"多出来的任务怎么看到"。可直接点底部按钮体验。</p>
+
+  <div class="cols">
+    <!-- ===== 方案 A ===== -->
+    <div class="col">
+      <div class="cap">A · 显示更多（原地展开）<span class="badge-tag">推荐</span>
+        <small>默认 3 条 + "显示更多 (N)"，点击原地展开/收起</small>
+      </div>
+      <div class="task-card">
+        <div class="card-head">
+          <h3>今日任务</h3>
+          <span class="goal-badge"><span class="dot-t"></span>0/8</span>
+        </div>
+        <div class="add-row">
+          <input class="add-input" placeholder="添加新任务...（N）" readonly>
+          <button class="add-btn">+</button>
+        </div>
+        <div class="date-header">今天</div>
+        <div class="task-list" id="list-a"></div>
+        <div class="more-row" id="more-a" onclick="toggleA()">
+          <span id="more-text-a">显示更多 (3)</span>
+          <svg class="chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 方案 B ===== -->
+    <div class="col">
+      <div class="cap">B · 固定 3 条 + 弹窗查看全部
+        <small>卡片高度永远不变，全部任务在弹窗里看</small>
+      </div>
+      <div class="task-card">
+        <div class="card-head">
+          <h3>今日任务</h3>
+          <span class="goal-badge"><span class="dot-t"></span>0/8</span>
+        </div>
+        <div class="add-row">
+          <input class="add-input" placeholder="添加新任务...（N）" readonly>
+          <button class="add-btn">+</button>
+        </div>
+        <div class="date-header">今天</div>
+        <div class="task-list" id="list-b"></div>
+        <button class="hist-btn" onclick="openModal()">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
+          查看全部任务 (6)
+        </button>
+      </div>
+    </div>
+
+    <!-- ===== 方案 C ===== -->
+    <div class="col">
+      <div class="cap">C · 内部滚动
+        <small>固定高度内滚动，全部任务原地可达</small>
+      </div>
+      <div class="task-card">
+        <div class="card-head">
+          <h3>今日任务</h3>
+          <span class="goal-badge"><span class="dot-t"></span>0/8</span>
+        </div>
+        <div class="add-row">
+          <input class="add-input" placeholder="添加新任务...（N）" readonly>
+          <button class="add-btn">+</button>
+        </div>
+        <div class="date-header">今天</div>
+        <div class="task-list scroll" id="list-c"></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="sub" style="margin-top:26px; margin-bottom:0;">
+    <b>评估：</b>A 主流（TickTick/Things 同款）、上下文连续，但展开时会顶高卡片；B 布局绝对稳定但多一跳；C 无跳转但嵌套滚动在桌面端略糙（滚轮容易穿透到外层）。
+  </p>
+
+  <!-- 弹窗 -->
+  <div class="overlay" id="overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal">
+      <div class="modal-head">
+        <h3>今日任务 (6)</h3>
+        <button class="modal-x" onclick="closeModal()">×</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+<script>
+const TASKS = [
+  { name: 'test', done: true, time: '17:20' },
+  { name: 'test', done: true, time: '17:09' },
+  { name: 'test', done: true, time: '17:00' },
+  { name: 'test2', done: true, time: '16:44' },
+  { name: 'test', done: true, time: '16:41' },
+  { name: '写周报', done: false, time: '14:31' }
+];
+const TOMATO = '<svg class="ticon" viewBox="0 0 64 64"><ellipse cx="32" cy="38" rx="26" ry="24" fill="#e74c3c"/><path d="M32 18 C29 11 22 11 20 15 C18 19 23 22 27 21 C29 19 30 19 32 18" fill="#4a7c59"/><path d="M32 18 C35 11 42 11 44 15 C46 19 41 22 37 21 C35 19 34 19 32 18" fill="#5a8c69"/><rect x="30" y="15" width="4" height="5" rx="1.5" fill="#4a7c59"/></svg>';
+
+function card(t) {
+  if (t.done) {
+    return `<div class="tcard2 done">
+      <div class="l1">
+        <div class="cb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+        <div class="task-name-wrapper"><span class="nm2">${t.name}</span></div>
+        <span class="tag ok">已完成</span>
+      </div>
+      <div class="l2">
+        <span class="meta">${TOMATO}×0</span>
+        <span class="meta done-time">完成于 ${t.time}</span>
+      </div>
+    </div>`;
+  }
+  return `<div class="tcard2">
+    <div class="l1">
+      <div class="task-name-wrapper"><span class="nm2">${t.name}</span></div>
+      <span class="meta-top">创建于 ${t.time}</span>
+    </div>
+    <div class="l2">
+      <span class="meta">${TOMATO}×0</span>
+      <div class="acts2">
+        <button class="wbtn-done"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+        <button class="wbtn-x">×</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// A：默认 3 条 + 展开
+let aOpen = false;
+function renderA() {
+  const show = aOpen ? TASKS : TASKS.slice(0, 3);
+  document.getElementById('list-a').innerHTML = show.map(card).join('');
+  document.getElementById('more-text-a').textContent = aOpen ? '收起' : `显示更多 (${TASKS.length - 3})`;
+  document.getElementById('more-a').classList.toggle('open', aOpen);
+}
+function toggleA() { aOpen = !aOpen; renderA(); }
+renderA();
+
+// B：固定 3 条 + 弹窗
+document.getElementById('list-b').innerHTML = TASKS.slice(0, 3).map(card).join('');
+document.getElementById('modal-body').innerHTML = TASKS.map(card).join('');
+function openModal() { document.getElementById('overlay').classList.add('show'); }
+function closeModal() { document.getElementById('overlay').classList.remove('show'); }
+
+// C：滚动
+document.getElementById('list-c').innerHTML = TASKS.map(card).join('');
+</script>
+</body>
+</html>

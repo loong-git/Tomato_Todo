@@ -237,13 +237,14 @@ function deleteArchivedTask(taskId: string) {
             <div class="task-name-wrapper" :title="task.name">
               <span class="nm2">{{ task.name }}</span>
             </div>
-            <span v-if="task.isCompleted" class="tag ok">已完成</span>
-            <span v-else-if="timerStore.currentTaskIds.includes(task.id) && timerStore.isRunning" class="tag live-tag">专注中</span>
+            <span v-if="timerStore.currentTaskIds.includes(task.id) && timerStore.isRunning && !task.isCompleted" class="tag live-tag">专注中</span>
+            <!-- [需求] 右上角：未完成=创建于 / 已完成=已完成标签 -->
+            <span v-if="!task.isCompleted" class="meta-top">创建于 {{ formatTime(task.createdAt) }}</span>
+            <span v-else class="tag ok">已完成</span>
           </div>
           <div class="l2">
             <span v-if="timerStore.currentTaskIds.includes(task.id) && timerStore.isRunning && !task.isCompleted" class="live"><span class="dot"></span>第 {{ task.completedPomodoros + 1 }} 个番茄进行中</span>
             <span class="meta"><svg class="ticon" viewBox="0 0 64 64"><ellipse cx="32" cy="38" rx="26" ry="24" fill="url(#tomatoIconGrad)"/><ellipse cx="23" cy="31" rx="9" ry="7" fill="rgba(255,255,255,.35)"/><path d="M32 18 C29 11 22 11 20 15 C18 19 23 22 27 21 C29 19 30 19 32 18" fill="#4a7c59"/><path d="M32 18 C35 11 42 11 44 15 C46 19 41 22 37 21 C35 19 34 19 32 18" fill="#5a8c69"/><path d="M32 18 C31 9 36 6 38 9 C40 12 36 17 32 18" fill="#3d6b4a"/><path d="M32 18 C33 9 28 6 26 9 C24 12 28 17 32 18" fill="#4a7c59"/><rect x="30" y="15" width="4" height="5" rx="1.5" fill="#4a7c59"/></svg> ×{{ task.completedPomodoros }}<template v-if="task.isCompleted && taskDayDuration(task.id, task.createdAt) > 0"> · {{ formatDuration(taskDayDuration(task.id, task.createdAt)) }}</template></span>
-            <span class="meta">{{ formatTime(task.createdAt) }} 创建</span>
             <div class="acts2" v-if="!task.isCompleted">
               <button
                 v-if="strikingTaskId !== task.id"
@@ -258,6 +259,8 @@ function deleteArchivedTask(taskId: string) {
               <button class="archive-btn" @click.stop="archiveTask(task.id)" title="归档">📦</button>
               <button class="delete-btn" @click.stop="deleteTask(task.id)">×</button>
             </div>
+            <!-- [需求] 已完成卡：完成时间右下角（与"已完成"标签换位） -->
+            <span v-if="task.isCompleted" class="meta done-time">完成于 {{ formatTime(task.completedAt || task.createdAt) }}</span>
           </div>
         </div>
       </div>
@@ -487,7 +490,7 @@ function deleteArchivedTask(taskId: string) {
 .tcard2 {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 7px;
   padding: 9px 12px;
   border-radius: 10px;
   border: 1px solid var(--border-color);
@@ -594,6 +597,18 @@ function deleteArchivedTask(taskId: string) {
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+/* [需求] 未完成卡：创建时间置右上角 */
+.meta-top {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* [需求] 已完成卡：完成时间放右下角（与右上角"已完成"标签换位） */
+.meta.done-time {
+  margin-left: auto;
 }
 
 .cb2 {
