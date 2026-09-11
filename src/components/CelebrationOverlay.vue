@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useTimerStore } from '@/stores'
+import { useTimerStore, useSettingsStore } from '@/stores'
 
 const timerStore = useTimerStore()
+const settingsStore = useSettingsStore()
 
 const show = ref(false)
 const particles = ref<{ id: number; color: string; driftX: number; delay: number }[]>([])
@@ -12,11 +13,15 @@ const showGoldenFlash = ref(false)
 // 判断是否是今日首次
 const isFirstToday = computed(() => timerStore.streakCount === 1)
 
-// 粒子颜色
-const emberColors = ['#e74c3c', '#f39c12', '#e67e22', '#ffd700']
+// 粒子颜色（[改版] 按主题适配：浅色底去掉淡金 #ffd700，换深橙保证可见度）
+const emberColors = computed(() =>
+  settingsStore.settings.theme === 'light'
+    ? ['#e74c3c', '#f39c12', '#e67e22', '#d35400']
+    : ['#e74c3c', '#f39c12', '#e67e22', '#ffd700']
+)
 
 function getEmberColor(index: number): string {
-  return emberColors[index % emberColors.length]
+  return emberColors.value[index % emberColors.value.length]
 }
 
 function generateParticles() {
@@ -216,6 +221,15 @@ watch(() => timerStore.justCompleted, (completed) => {
   box-shadow:
     0 0 30px rgba(255, 215, 0, 0.7),
     0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+/* [改版主题适配] 浅色底：银/铜徽章加细描边防止融进背景 */
+:global([data-theme="light"]) .streak-badge.bronze,
+:global([data-theme="light"]) .streak-badge.silver {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 0 25px rgba(205, 127, 50, 0.4),
+    0 4px 15px rgba(0, 0, 0, 0.18);
 }
 
 /* 动画过渡 */

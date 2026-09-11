@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>方案C · Windows Fluent 风（原生感 · 均衡布局）</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:"Segoe UI Variable","Segoe UI","Microsoft YaHei",sans-serif; }
+  body { background:#d5d8dd; display:flex; flex-direction:column; align-items:center; padding:24px; min-height:100vh; }
+  .banner { margin-bottom:16px; color:#555; font-size:13px; }
+  .banner b { color:#c42b1c; }
+  .win { width:920px; height:640px; border-radius:10px; overflow:hidden;
+         background:linear-gradient(160deg,#f6f4f2 0%,#eeece9 100%);
+         box-shadow:0 20px 60px rgba(0,0,0,.22), 0 0 0 1px rgba(0,0,0,.06);
+         display:flex; flex-direction:column; }
+  /* 原生标题栏：左 logo+文字，右 caption 按钮 */
+  .titlebar { height:40px; display:flex; align-items:center; padding-left:14px; gap:10px; flex-shrink:0; }
+  .titlebar .tomato { width:18px; height:18px; border-radius:50%;
+              background:radial-gradient(circle at 35% 35%,#ff6b5b,#c42b1c); }
+  .titlebar .name { font-size:12.5px; color:#1b1b1b; }
+  .titlebar .spacer { flex:1; }
+  .cap { width:46px; height:40px; display:flex; align-items:center; justify-content:center;
+         font-size:11px; color:#1b1b1b; }
+  .cap.close:hover { background:#c42b1c; color:#fff; }
+  .cap:hover { background:#e5e3e0; }
+  /* 内容：上计时带 + 中双卡 + 下热力条 */
+  .content { flex:1; padding:8px 28px 20px; display:flex; flex-direction:column; min-height:0; }
+  .card { background:#ffffffcc; border:1px solid #e3e0dc; border-radius:10px; }
+  /* 计时卡：横向，数字+控制一体 */
+  .timer-card { padding:24px 30px; display:flex; align-items:center; gap:24px; margin-bottom:16px; }
+  .accent-bar { width:5px; height:64px; border-radius:3px; background:#c42b1c; }
+  .t-num { font-size:62px; font-weight:600; color:#1b1b1b; font-variant-numeric:tabular-nums; line-height:1; }
+  .t-meta { display:flex; flex-direction:column; gap:6px; }
+  .t-mode { font-size:13px; color:#5d5a56; }
+  .t-mode b { color:#c42b1c; }
+  .t-task { font-size:13px; color:#5d5a56; }
+  .t-ctl { margin-left:auto; display:flex; gap:10px; }
+  .btn-primary { height:40px; padding:0 26px; border-radius:6px; background:#c42b1c; color:#fff;
+                 font-size:14px; font-weight:600; display:flex; align-items:center; }
+  .btn-std { height:40px; padding:0 18px; border-radius:6px; border:1px solid #d8d4cf;
+             background:#fff; color:#3b3835; font-size:13px; display:flex; align-items:center; }
+  /* 中部双卡 */
+  .mid { flex:1; display:flex; gap:16px; min-height:0; margin-bottom:16px; }
+  .tasks-card { width:46%; padding:18px 22px; display:flex; flex-direction:column; }
+  .stats-card { flex:1; padding:18px 22px; }
+  .card-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px; }
+  .card-head h3 { font-size:14px; color:#1b1b1b; font-weight:600; }
+  .card-head span { font-size:12px; color:#8a8781; }
+  .task { display:flex; align-items:center; gap:10px; padding:9px 8px; border-radius:6px; }
+  .task:hover { background:#f7f5f2; }
+  .cb { width:17px; height:17px; border:1.5px solid #c4bfb8; border-radius:4px; flex-shrink:0; }
+  .task.on { background:#fdeae7; outline:1px solid #f3cfc9; }
+  .task.on .cb { border-color:#c42b1c; }
+  .task .n { font-size:13px; color:#1b1b1b; flex:1; }
+  .task .p { font-size:11px; color:#8a8781; }
+  .add { margin-top:auto; padding-top:10px; font-size:12.5px; color:#a09b94; }
+  /* 统计数字 2×2 */
+  .sgrid { display:grid; grid-template-columns:1fr 1fr; gap:14px 10px; margin-bottom:14px; }
+  .sv { font-size:24px; font-weight:650; color:#1b1b1b; }
+  .sk { font-size:11.5px; color:#8a8781; margin-top:1px; }
+  .goal-bar { height:6px; background:#efece8; border-radius:3px; overflow:hidden; margin:4px 0 2px; }
+  .goal-bar .f { width:38%; height:100%; background:#c42b1c; border-radius:3px; }
+  .goal-cap { font-size:11px; color:#8a8781; }
+  /* 底部热力条 */
+  .heat-card { padding:14px 22px; display:flex; align-items:center; gap:20px; }
+  .heat-title { font-size:13px; color:#1b1b1b; font-weight:600; white-space:nowrap; }
+  .heat-title small { display:block; font-size:11px; color:#8a8781; font-weight:400; margin-top:2px; }
+  .hcells { flex:1; display:flex; gap:4px; }
+  .hcells .c { flex:1; height:26px; border-radius:4px; background:#f0ede9; }
+  .hcells .c.l1 { background:#f3cdc7; } .hcells .c.l2 { background:#e89b90; }
+  .hcells .c.l3 { background:#d95f4e; } .hcells .c.l4 { background:#c42b1c; }
+  .heat-sum { font-size:12px; color:#5d5a56; white-space:nowrap; }
+  .heat-sum b { color:#1b1b1b; }
+</style>
+</head>
+<body>
+<div class="banner"><b>方案 C</b> · Windows Fluent 风 —— 原生标题栏、卡片仪表盘、上下分区 · 920×640</div>
+<div class="win">
+  <div class="titlebar">
+    <div class="tomato"></div><div class="name">番茄TODO</div>
+    <div class="spacer"></div>
+    <div class="cap">☀</div><div class="cap">⚙</div><div class="cap">─</div><div class="cap">▢</div><div class="cap close">✕</div>
+  </div>
+  <div class="content">
+    <div class="card timer-card">
+      <div class="accent-bar"></div>
+      <div class="t-num">24:38</div>
+      <div class="t-meta">
+        <div class="t-mode"><b>● 专注中</b> · 第 3 个番茄</div>
+        <div class="t-task">算法题 · 动态规划</div>
+      </div>
+      <div class="t-ctl">
+        <div class="btn-std">↺ 重置</div><div class="btn-std">⏭ 跳过</div><div class="btn-primary">⏸ 暂停</div>
+      </div>
+    </div>
+    <div class="mid">
+      <div class="card tasks-card">
+        <div class="card-head"><h3>今日任务</h3><span>3 / 8 个番茄</span></div>
+        <div class="task on"><div class="cb"></div><div class="n">算法题 · 动态规划</div><div class="p">🍅 ×2</div></div>
+        <div class="task"><div class="cb"></div><div class="n">写周报</div><div class="p">🍅 ×1</div></div>
+        <div class="task"><div class="cb"></div><div class="n">背单词 50 个</div><div class="p">🍅 ×0</div></div>
+        <div class="task"><div class="cb"></div><div class="n">送外卖</div><div class="p">🍅 ×5</div></div>
+        <div class="add">＋ 添加任务</div>
+      </div>
+      <div class="card stats-card">
+        <div class="card-head"><h3>今日目标</h3><span>进度 38%</span></div>
+        <div class="sgrid">
+          <div><div class="sv">1.6<small style="font-size:12px;color:#8a8781"> / 4 h</small></div><div class="sk">今日专注时长</div>
+            <div class="goal-bar"><div class="f"></div></div><div class="goal-cap">超过 100% 不封顶</div></div>
+          <div><div class="sv">30 天</div><div class="sk">连续记录</div></div>
+          <div><div class="sv">382</div><div class="sk">累计番茄</div></div>
+          <div><div class="sv">157.5 h</div><div class="sk">累计专注</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card heat-card">
+      <div class="heat-title">专注热力<small>9 月 · 每格一天</small></div>
+      <div class="hcells">
+        <div class="c l2"></div><div class="c"></div><div class="c l3"></div><div class="c l1"></div>
+        <div class="c l4"></div><div class="c l2"></div><div class="c"></div><div class="c l3"></div>
+        <div class="c l1"></div><div class="c l4"></div><div class="c l2"></div><div class="c l3"></div>
+        <div class="c"></div><div class="c l2"></div><div class="c l4"></div><div class="c l1"></div>
+        <div class="c l3"></div><div class="c l2"></div><div class="c l4"></div><div class="c l3"></div>
+        <div class="c"></div><div class="c l2"></div><div class="c l1"></div><div class="c l4"></div>
+        <div class="c l3"></div><div class="c"></div><div class="c l2"></div><div class="c l3"></div>
+        <div class="c l1"></div><div class="c l4"></div>
+      </div>
+      <div class="heat-sum">本月 <b>278</b> 个番茄 · <b>69.5</b> 小时</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

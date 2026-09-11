@@ -11,7 +11,6 @@ import StatsDisplay from '@/components/StatsDisplay.vue'
 import SettingsPanel from '@/components/SettingsPanel.vue'
 import FocusWindow from '@/components/FocusWindow.vue'
 import CelebrationOverlay from '@/components/CelebrationOverlay.vue'
-import DataManager from '@/components/DataManager.vue'
 import AppToast from '@/components/AppToast.vue'
 
 const timerStore = useTimerStore()
@@ -39,11 +38,19 @@ function handleKeydown(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement).tagName
   const isInputField = tag === 'INPUT' || tag === 'TEXTAREA'
 
-  // 用户自定义的切窗口快捷键(默认 Alt+F = 切全屏, Alt+M = 切小窗)
+  // [方案1] 沉浸模式下 Esc 退出（计时继续）
+  if (inlineFocus.value && e.key === 'Escape') {
+    e.preventDefault()
+    inlineFocus.value = false
+    console.log('[键盘事件] Esc - 退出沉浸模式')
+    return
+  }
+
+  // 用户自定义的切窗口快捷键(默认 Alt+F = 切沉浸模式, Alt+M = 切小窗)
   if (matchShortcut(e, settingsStore.settings.shortcuts.toggleFullscreen)) {
     e.preventDefault()
-    console.log('[键盘事件] toggleFullscreen - 打开全屏专注')
-    openFocusMode('fullscreen')
+    console.log('[键盘事件] toggleFullscreen - 打开沉浸模式')
+    inlineFocus.value = true
     return
   }
   if (matchShortcut(e, settingsStore.settings.shortcuts.toggleCompact)) {
@@ -144,6 +151,16 @@ onMounted(async () => {
     window.electronAPI.focus.onFocusModeChange((active: boolean) => {
       timerStore.setFocusModeActive(active)
     })
+    // [方案1] 小窗专注控制按钮 → 执行计时操作
+    window.electronAPI.focus.onControl((action) => {
+      if (action === 'pause') timerStore.pause()
+      else if (action === 'start') timerStore.start()
+      else if (action === 'skip') timerStore.skip()
+    })
+    // [需求] 最大化状态回传：驱动 ▢ 按钮 最大化/向下还原 图标切换
+    window.electronAPI.window.onMaxState((v) => {
+      isCustomMax.value = v
+    })
   }
 
   // 注册键盘快捷键
@@ -216,11 +233,77 @@ function onMainScroll(e: Event) {
   }, 800)
 }
 
+// [方案1] 内嵌沉浸模式：主窗口原地覆盖层，替代原独立全屏窗口（计时直接读 store，免跨窗口同步）
+const inlineFocus = ref(false)
+const fmtFocusTime = computed(() => {
+  const m = Math.floor(timerStore.timeLeft / 60)
+  const s = timerStore.timeLeft % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+})
+
+// [改版] 计时卡内显示当前专注的任务名
+const currentTaskName = computed(() => {
+  const ids = timerStore.currentTaskIds
+  if (ids.length === 0) return ''
+  return taskStore.tasks.find(t => t.id === ids[0])?.name || ''
+})
+
 // 窗口控制
 function minimizeWindow() {
   if (window.electronAPI) {
     window.electronAPI.window.minimize()
   }
+}
+
+// [改版] 最大化/还原（双击标题栏 / ▢ 按钮触发）
+// isCustomMax 跟随主进程真实状态：驱动 ▢ 按钮切换 最大化/向下还原 图标与 hover 提示
+const isCustomMax = ref(false)
+function toggleMaximize() {
+  window.electronAPI?.window.toggleMaximize()
+}
+
+/* [修复] 标题栏空白区：系统原生拖动（-webkit-app-region: drag）。
+   旧版自实现 IPC 拖动在 Windows DPI≠100% 下连发 setBounds 会拉宽窗口，已废弃。
+   drag 区可能吞 dblclick，双击最大化用 pointerdown 计时检测（<400ms 两次按下） */
+let lastTitleDownAt = 0
+function onTitleBlankPointerDown(e: PointerEvent) {
+  if (e.button !== 0) return
+  const now = Date.now()
+  if (now - lastTitleDownAt < 400) {
+    lastTitleDownAt = 0
+    toggleMaximize()
+  } else {
+    lastTitleDownAt = now
+  }
+}
+
+/* [改版] 仅右缘调宽把手：拖动把目标宽度发给主进程（主进程夹紧后 setBounds） */
+const resizing = ref(false)
+let resizeStartX = 0
+let resizeStartW = 0
+let resizePendingW = 0
+let resizeRaf = 0
+
+function onResizeDown(e: PointerEvent) {
+  resizeStartX = e.clientX
+  resizeStartW = window.innerWidth
+  resizing.value = true
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+}
+
+function onResizeMove(e: PointerEvent) {
+  if (!resizing.value) return
+  resizePendingW = Math.round(resizeStartW + (e.clientX - resizeStartX))
+  if (!resizeRaf) {
+    resizeRaf = requestAnimationFrame(() => {
+      resizeRaf = 0
+      window.electronAPI?.window.resizeTo(resizePendingW)
+    })
+  }
+}
+
+function onResizeUp() {
+  resizing.value = false
 }
 
 function closeWindow() {
@@ -230,8 +313,8 @@ function closeWindow() {
   }
 }
 
-// 打开专注模式（compact 小窗 / fullscreen 全屏）
-async function openFocusMode(mode: 'compact' | 'fullscreen') {
+// [方案1] 打开小窗专注（compact 独立窗口）。沉浸模式已改为内嵌覆盖层（inlineFocus），不再走此通道
+async function openFocusMode(mode: 'compact') {
   console.log(`[App] openFocusMode 入口: mode=${mode} timerStore.timeLeft=${timerStore.timeLeft} isRunning=${timerStore.isRunning}`)
   if (!window.electronAPI) return
 
@@ -277,6 +360,8 @@ async function openFocusMode(mode: 'compact' | 'fullscreen') {
           </svg>
           <span class="title">番茄TODO</span>
         </div>
+        <!-- [修复] 标题栏空白区：系统原生拖动 + pointerdown 计时检测双击最大化 -->
+        <div class="title-blank" title="双击最大化 / 按住拖动窗口" @pointerdown="onTitleBlankPointerDown"></div>
       </div>
       <div class="window-controls">
         <button class="theme-toggle" @click="isDark = !isDark" :title="isDark ? '切换浅色模式' : '切换深色模式'">
@@ -289,19 +374,34 @@ async function openFocusMode(mode: 'compact' | 'fullscreen') {
           </svg>
         </button>
         <button class="focus-btn" @click="openFocusMode('compact')" title="小窗专注 (Alt+F)">
+          <!-- 画中画图标：外框+右下角小窗，与最大化方框区分 -->
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="5" y="5" width="14" height="14" rx="1.5"/>
+            <rect x="3.5" y="4.5" width="17" height="15" rx="2"/>
+            <rect x="12" y="12" width="6" height="4.5" rx="1" fill="currentColor" stroke="none"/>
           </svg>
         </button>
-        <button class="focus-btn" @click="openFocusMode('fullscreen')" title="全屏专注">
+        <button class="focus-btn" @click="inlineFocus = true" title="沉浸模式">
+          <!-- 聚焦圆环图标：圆环+中心点，表意"沉浸专注"，与方框系区分 -->
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="12" cy="12" r="8.5"/>
+            <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/>
           </svg>
         </button>
         <SettingsPanel ref="settingsRef" />
+        <div class="title-divider"></div>
         <button class="window-btn minimize" @click="minimizeWindow" title="最小化">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+        <button class="window-btn maximize" @click="toggleMaximize" :title="isCustomMax ? '向下还原' : '最大化'">
+          <!-- 最大化：单方框；向下还原：双框（Windows 标准样式） -->
+          <svg v-if="!isCustomMax" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="5" y="5" width="14" height="14" rx="1.5"/>
+          </svg>
+          <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <rect x="4.5" y="8.5" width="11" height="11" rx="1.5"/>
+            <path d="M8.5 4.5H18a1.5 1.5 0 0 1 1.5 1.5v9.5"/>
           </svg>
         </button>
         <button class="window-btn close" @click="closeWindow" title="关闭">
@@ -313,24 +413,275 @@ async function openFocusMode(mode: 'compact' | 'fullscreen') {
       </div>
     </header>
 
-    <main
-      @scroll.passive="onMainScroll"
-    >
-      <div class="main-content">
-        <TimerDisplay />
-        <ModeSelector />
-        <TimerControls />
-        <StatsDisplay />
+    <!-- [改版 920x640] 三段式：顶部计时卡 / 中部双卡（任务|统计）/ 底部热力条 -->
+    <main @scroll.passive="onMainScroll">
+      <div class="content">
+        <section class="timer-area">
+          <div class="timer-card">
+            <TimerDisplay />
+            <div class="timer-meta">
+              <ModeSelector />
+              <div v-if="timerStore.isRunning && currentTaskName" class="current-task-line">
+                正在专注 · <b>{{ currentTaskName }}</b>
+              </div>
+            </div>
+            <div class="timer-ctl">
+              <TimerControls />
+            </div>
+          </div>
+        </section>
         <TaskList />
-        <DataManager />
+        <StatsDisplay />
       </div>
     </main>
+
+    <!-- [改版] 仅右缘调宽：拖拽把手（高度锁死，宽度最小 1056） -->
+    <div
+      class="resize-handle"
+      title="拖动调整宽度"
+      @pointerdown="onResizeDown"
+      @pointermove="onResizeMove"
+      @pointerup="onResizeUp"
+      @pointercancel="onResizeUp"
+    ></div>
+
+    <!-- [方案1] 内嵌沉浸模式：覆盖层盖住整个主窗口，计时直接读 store，Esc 退出（计时继续） -->
+    <div v-if="inlineFocus" class="focus-inline">
+      <div class="fi-task">正在专注<template v-if="currentTaskName"> · {{ currentTaskName }}</template></div>
+      <div class="fi-time">{{ fmtFocusTime }}</div>
+      <div class="fi-btns">
+        <button
+          class="fbtn primary"
+          :title="timerStore.isRunning ? '暂停 (Space)' : '继续 (Space)'"
+          @click="timerStore.isRunning ? timerStore.pause() : timerStore.start()"
+        >
+          <svg v-if="timerStore.isRunning" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+            <rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>
+          </svg>
+          <svg v-else viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+            <path d="M8 5.5v13a.7.7 0 0 0 1.07.6l10-6.5a.7.7 0 0 0 0-1.2l-10-6.5A.7.7 0 0 0 8 5.5z"/>
+          </svg>
+          {{ timerStore.isRunning ? '暂停' : '继续' }}
+        </button>
+        <button class="fbtn" title="退出沉浸模式 (Esc)" @click="inlineFocus = false">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>
+          </svg>
+          退出
+        </button>
+      </div>
+      <div class="fi-esc">按 Esc 退出 · 计时继续</div>
+    </div>
   </div>
   <CelebrationOverlay />
   <AppToast />
 </template>
 
 <style scoped>
+/* ===== [改版 920x640] 三段式仪表盘：顶部计时卡 / 中部双卡（任务|统计）/ 底部热力条 ===== */
+main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "timer timer"
+    "tasks stats"
+    "heat heat";
+  gap: 10px;
+  align-items: stretch;
+  min-height: 100%;
+  padding: 12px 14px;
+}
+
+/* 顶部计时卡 */
+.timer-area {
+  grid-area: timer;
+  min-width: 0;
+}
+
+.timer-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 12px 18px 14px;
+  box-shadow: 0 2px 12px var(--shadow);
+}
+
+.timer-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  /* ModeSelector 移除/存在时高度稳定，"正在专注"行出现不跳动 */
+  min-height: 19px;
+}
+
+.current-task-line {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.current-task-line b {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.timer-ctl {
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ===== 标题栏 ===== */
+/* [修复] 标题栏空白区：系统原生拖动（drag），双击最大化走 pointerdown 计时检测 */
+.title-blank {
+  flex: 1;
+  align-self: stretch;
+  -webkit-app-region: drag;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* [需求] 竖线：分隔功能按钮区（左）与窗口控制区（右） */
+.title-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border-color);
+  margin: 0 4px;
+  align-self: center;
+  flex-shrink: 0;
+}
+
+/* 与 SettingsPanel settings-btn 统一的紧凑尺寸 */
+.theme-toggle,
+.focus-btn,
+.window-btn {
+  width: 30px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.theme-toggle:hover,
+.focus-btn:hover,
+.window-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.light-theme .theme-toggle:hover,
+.light-theme .focus-btn:hover,
+.light-theme .window-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #2d2420;
+}
+
+.light-theme .window-btn.close:hover {
+  background: #e74c3c;
+  color: white;
+}
+
+/* [改版] 仅右缘调宽把手：全高 6px，悬停可见提示条 */
+.resize-handle {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 6px;
+  height: 100vh;
+  cursor: ew-resize;
+  z-index: 999;
+  -webkit-app-region: no-drag;
+  touch-action: none;
+}
+
+/* ===== [方案1] 内嵌沉浸模式覆盖层（对齐 demo-focus-inline，主题变量适配） ===== */
+.focus-inline {
+  position: absolute;
+  inset: 0;
+  z-index: 99;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  animation: fi-fade 0.25s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@keyframes fi-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.fi-task {
+  color: var(--text-muted);
+  font-size: 15px;
+  letter-spacing: 1px;
+}
+
+.fi-time {
+  font-size: 150px;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.fi-btns {
+  display: flex;
+  gap: 16px;
+}
+
+.fbtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 10px 28px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.12s ease;
+}
+
+.fbtn:hover {
+  filter: brightness(1.15);
+}
+
+.fbtn:active {
+  transform: scale(0.96);
+}
+
+.fbtn.primary {
+  background: var(--tomato);
+  border-color: var(--tomato);
+  color: #fff;
+  font-weight: 700;
+}
+
+.fi-esc {
+  color: var(--text-muted);
+  font-size: 12px;
+}
 </style>
 
 <style>
@@ -553,17 +904,8 @@ main {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
   transition: scrollbar-color 0.3s ease;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.main-content {
-  width: 100%;
-  max-width: 420px;
-  padding: 0 24px 40px;
-  display: flex;
-  flex-direction: column;
+  /* [改版] 旧 .main-content 布局的 flex column + align-items:center 已删：
+     会让三段式 .content 网格收缩居中，两侧留大空白 */
 }
 
 main:hover,

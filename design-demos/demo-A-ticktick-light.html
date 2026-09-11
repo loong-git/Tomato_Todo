@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>方案A · 滴答清单风（浅色 · 任务主角）</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:"Segoe UI","Microsoft YaHei",sans-serif; }
+  body { background:#e8e6e3; display:flex; flex-direction:column; align-items:center; padding:24px; min-height:100vh; }
+  .banner { margin-bottom:16px; color:#555; font-size:13px; }
+  .banner b { color:#e74c3c; }
+  .win { width:920px; height:640px; background:#fbfaf8; border-radius:12px; overflow:hidden;
+         box-shadow:0 20px 60px rgba(0,0,0,.18); display:flex; flex-direction:column; }
+  /* 标题栏 */
+  .titlebar { height:44px; display:flex; align-items:center; padding:0 16px; gap:10px;
+              border-bottom:1px solid #eee7e0; flex-shrink:0; }
+  .titlebar .tomato { width:20px; height:20px; border-radius:50%;
+              background:radial-gradient(circle at 35% 35%,#ff6b5b,#e74c3c); position:relative; }
+  .titlebar .tomato::before { content:""; position:absolute; top:-3px; left:8px; width:5px; height:4px; background:#4a7c59; border-radius:2px; }
+  .titlebar .name { font-weight:600; color:#2d2a26; font-size:14px; }
+  .titlebar .date { color:#9a938c; font-size:12px; margin-left:4px; }
+  .titlebar .spacer { flex:1; }
+  .tbtn { width:26px; height:26px; border-radius:6px; display:flex; align-items:center; justify-content:center;
+          color:#8a837c; font-size:13px; cursor:default; }
+  .tbtn:hover { background:#f0ebe5; }
+  /* 主体左右分栏 */
+  .body { flex:1; display:flex; min-height:0; }
+  /* 左：任务（主角） */
+  .tasks { width:380px; border-right:1px solid #eee7e0; display:flex; flex-direction:column; flex-shrink:0; }
+  .tasks .head { padding:16px 20px 8px; display:flex; align-items:baseline; gap:8px; }
+  .tasks .head h2 { font-size:16px; color:#2d2a26; }
+  .tasks .head .count { font-size:12px; color:#a39b93; }
+  .task-list { flex:1; overflow:auto; padding:4px 10px; }
+  .task { display:flex; align-items:center; gap:10px; padding:11px 12px; border-radius:8px; }
+  .task:hover { background:#f4f0ea; }
+  .task.active { background:#fdeeec; border:1px solid #f7d9d5; }
+  .checkbox { width:18px; height:18px; border:1.5px solid #c9c1b8; border-radius:5px; flex-shrink:0; }
+  .task.done .checkbox { background:#4a7c59; border-color:#4a7c59; position:relative; }
+  .task.done .checkbox::after { content:"✓"; color:#fff; font-size:11px; position:absolute; top:-1px; left:3px; }
+  .task .tname { font-size:13.5px; color:#2d2a26; flex:1; }
+  .task.done .tname { color:#b5aca3; text-decoration:line-through; }
+  .task.active .tname { font-weight:600; }
+  .task .pomos { font-size:11px; color:#a39b93; background:#f0ebe5; border-radius:10px; padding:2px 8px; }
+  .task.active .pomos { background:#f9dcd8; color:#c2453a; }
+  .add-task { margin:10px 16px 14px; padding:10px 12px; border:1.5px dashed #d8d0c6; border-radius:8px;
+              color:#a39b93; font-size:13px; }
+  /* 右：计时（横向大数字条）+ 统计 */
+  .right { flex:1; display:flex; flex-direction:column; padding:20px 24px 18px; min-width:0; }
+  /* 模式 tab */
+  .modes { display:flex; gap:6px; margin-bottom:18px; }
+  .mode { padding:6px 14px; border-radius:16px; font-size:12.5px; color:#8a837c; }
+  .mode.on { background:#e74c3c; color:#fff; font-weight:600; }
+  .mode:not(.on) { background:#f0ebe5; }
+  /* 大数字横排计时 */
+  .timer-row { display:flex; align-items:center; gap:22px; margin-bottom:20px; }
+  .big-time { font-size:74px; font-weight:700; color:#2d2a26; letter-spacing:2px;
+              font-variant-numeric:tabular-nums; line-height:1; }
+  .big-time .sec { color:#c9c1b8; }
+  .timer-side { display:flex; flex-direction:column; gap:10px; }
+  .current-task-line { font-size:12.5px; color:#a39b93; }
+  .current-task-line b { color:#2d2a26; font-size:13.5px; }
+  .start-btn { width:150px; height:44px; border-radius:10px; background:#e74c3c; color:#fff;
+               font-size:15px; font-weight:600; display:flex; align-items:center; justify-content:center;
+               box-shadow:0 4px 14px rgba(231,76,60,.35); }
+  .mini-controls { display:flex; gap:8px; }
+  .mini-ctl { width:44px; height:44px; border-radius:10px; background:#f0ebe5; color:#8a837c;
+              display:flex; align-items:center; justify-content:center; font-size:15px; }
+  /* 进度细条 */
+  .progress { height:5px; background:#f0ebe5; border-radius:3px; margin-bottom:22px; overflow:hidden; }
+  .progress .fill { width:62%; height:100%; background:#e74c3c; border-radius:3px; }
+  /* 底部：热力图 + 统计数字 */
+  .stats-row { display:flex; gap:22px; align-items:flex-end; margin-top:auto; }
+  .stat { text-align:left; }
+  .stat .v { font-size:22px; font-weight:700; color:#2d2a26; }
+  .stat .k { font-size:11.5px; color:#a39b93; margin-top:2px; }
+  .heat { margin-left:auto; text-align:right; }
+  .heat .cells { display:grid; grid-template-columns:repeat(14,14px); gap:3px; direction:rtl; }
+  .heat .c { width:14px; height:14px; border-radius:4px; background:#efe9e2; }
+  .heat .c.l1 { background:#f6c8c2; } .heat .c.l2 { background:#ee9d94; }
+  .heat .c.l3 { background:#e5695c; } .heat .c.l4 { background:#c0392b; }
+  .heat .cap { font-size:11px; color:#a39b93; margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="banner"><b>方案 A</b> · 滴答清单/Notion 风 —— 浅色、高信息密度、任务为主角 · 920×640</div>
+<div class="win">
+  <div class="titlebar">
+    <div class="tomato"></div><div class="name">番茄TODO</div><div class="date">9月6日 周六</div>
+    <div class="spacer"></div>
+    <div class="tbtn">☀</div><div class="tbtn">⚙</div><div class="tbtn">─</div><div class="tbtn">▢</div><div class="tbtn">✕</div>
+  </div>
+  <div class="body">
+    <div class="tasks">
+      <div class="head"><h2>今日任务</h2><span class="count">3 / 8 个番茄</span></div>
+      <div class="task-list">
+        <div class="task active"><div class="checkbox"></div><div class="tname">算法题 · 动态规划</div><div class="pomos">🍅 ×2</div></div>
+        <div class="task"><div class="checkbox"></div><div class="tname">写周报</div><div class="pomos">🍅 ×1</div></div>
+        <div class="task"><div class="checkbox"></div><div class="tname">背单词 50 个</div><div class="pomos">🍅 ×0</div></div>
+        <div class="task done"><div class="checkbox"></div><div class="tname">送外卖</div><div class="pomos">🍅 ×5</div></div>
+      </div>
+      <div class="add-task">＋ 添加任务（按 N）</div>
+    </div>
+    <div class="right">
+      <div class="modes"><div class="mode on">专注</div><div class="mode">短休息</div><div class="mode">长休息</div></div>
+      <div class="timer-row">
+        <div class="big-time">25<span class="sec">:00</span></div>
+        <div class="timer-side">
+          <div class="current-task-line">正在专注：<b>算法题 · 动态规划</b></div>
+          <div class="start-btn">▶ 开始专注</div>
+          <div class="mini-controls"><div class="mini-ctl">↺</div><div class="mini-ctl">⏭</div></div>
+        </div>
+      </div>
+      <div class="progress"><div class="fill"></div></div>
+      <div class="stats-row">
+        <div class="stat"><div class="v">3</div><div class="k">今日番茄</div></div>
+        <div class="stat"><div class="v">30 天</div><div class="k">连续记录</div></div>
+        <div class="stat"><div class="v">382</div><div class="k">累计番茄</div></div>
+        <div class="stat"><div class="v">157.5h</div><div class="k">累计专注</div></div>
+        <div class="heat">
+          <div class="cells">
+            <div class="c l2"></div><div class="c l1"></div><div class="c l3"></div><div class="c"></div>
+            <div class="c l2"></div><div class="c l4"></div><div class="c l1"></div><div class="c l3"></div>
+            <div class="c l2"></div><div class="c"></div><div class="c l1"></div><div class="c l2"></div>
+            <div class="c l4"></div><div class="c l3"></div>
+          </div>
+          <div class="cap">近两周专注热力 ›</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

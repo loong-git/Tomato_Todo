@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>主任务列表 · 两个优化方向（深色）</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:"Segoe UI","Microsoft YaHei",sans-serif; }
+  body { background:#211d1a; display:flex; gap:28px; align-items:flex-start; padding:28px; min-height:100vh; }
+  .col { flex:1; }
+  .banner { color:#8a837c; font-size:13px; margin-bottom:12px; line-height:1.6; }
+  .banner b { color:#ff6b5b; }
+  /* 模拟任务卡容器 */
+  .card { background:#1f1915; border:1px solid rgba(255,255,255,.07); border-radius:14px;
+          padding:14px 16px; box-shadow:0 10px 32px rgba(0,0,0,.4); }
+  .head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .head h3 { font-size:14px; color:#faf5f0; font-weight:600; }
+  .head span { font-size:12px; color:#8a827a; }
+  .add { display:flex; gap:8px; margin-bottom:12px; }
+  .add input { flex:1; padding:9px 14px; border:1px solid rgba(255,255,255,.08); border-radius:10px;
+               background:#161210; color:#faf5f0; font-size:13px; outline:none; }
+  .add .plus { width:38px; height:38px; border-radius:10px; background:#e74c3c; color:#fff;
+               display:flex; align-items:center; justify-content:center; font-size:17px; }
+  .date { display:flex; align-items:center; gap:10px; margin:4px 0 6px; }
+  .date .t { font-size:11.5px; color:#8a827a; }
+  .date .line { flex:1; height:1px; background:rgba(255,255,255,.05); }
+
+  /* ===== 方案1 · 悬浮操作清单 ===== */
+  .row { display:flex; align-items:center; gap:11px; padding:10px 10px; border-radius:9px;
+         position:relative; transition:background .15s; }
+  .row:hover { background:rgba(255,255,255,.04); }
+  .row.active { background:rgba(231,76,60,.08); }
+  .row.active::before { content:""; position:absolute; left:0; top:9px; bottom:9px; width:3px;
+                        border-radius:2px; background:#e74c3c; }
+  .cb { width:19px; height:19px; border-radius:50%; border:1.6px solid #5a524a; flex-shrink:0;
+        display:flex; align-items:center; justify-content:center; font-size:11px; color:transparent; }
+  .cb.on { border-color:#e74c3c; }
+  .cb.done { background:#27ae60; border-color:#27ae60; color:#fff; }
+  .nm { flex:1; font-size:13.5px; color:#e8e2da; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row.done-row .nm { color:#8a827a; text-decoration:line-through; text-decoration-color:rgba(255,255,255,.22); }
+  .cnt { font-size:11.5px; color:#8a827a; white-space:nowrap; }
+  .row.active .cnt { color:#ff8a7a; }
+  .acts { display:flex; gap:5px; opacity:0; transition:opacity .15s; }
+  .row:hover .acts { opacity:1; }
+  .abtn { width:26px; height:26px; border-radius:7px; background:rgba(255,255,255,.06); color:#a39b93;
+          display:flex; align-items:center; justify-content:center; font-size:12px; }
+  .abtn.del:hover { background:rgba(231,76,60,.2); color:#ff8a7a; }
+  .tm { font-size:11px; color:#6d655d; font-variant-numeric:tabular-nums; width:36px; text-align:right; }
+  .hint { margin-top:10px; font-size:11px; color:#6d655d; text-align:center; padding:2px 0 0; }
+
+  /* ===== 方案2 · 双行信息卡 ===== */
+  .k { display:flex; flex-direction:column; gap:5px; padding:11px 13px; border-radius:10px;
+       border:1px solid rgba(255,255,255,.05); background:rgba(255,255,255,.025); margin-bottom:7px;
+       position:relative; transition:border-color .15s; }
+  .k:hover { border-color:rgba(255,255,255,.12); }
+  .k.active { border-color:rgba(231,76,60,.55); background:rgba(231,76,60,.06); }
+  .k .l1 { display:flex; align-items:center; gap:10px; }
+  .k .nm2 { flex:1; font-size:13.5px; color:#e8e2da; font-weight:500; }
+  .k.done-k .nm2 { color:#8a827a; text-decoration:line-through; text-decoration-color:rgba(255,255,255,.22); font-weight:400; }
+  .k .tag { font-size:10.5px; padding:2px 9px; border-radius:9px; background:rgba(231,76,60,.16); color:#ff8a7a; }
+  .k .tag.ok { background:rgba(46,204,113,.14); color:#2ecc71; }
+  .k .l2 { display:flex; align-items:center; gap:12px; padding-left:29px; }
+  .k .meta { font-size:11px; color:#6d655d; }
+  .k .live { display:flex; align-items:center; gap:5px; font-size:11px; color:#ff8a7a; }
+  .live .dot { width:6px; height:6px; border-radius:50%; background:#e74c3c; animation:blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity:.3; } }
+  .k .acts2 { margin-left:auto; display:flex; gap:5px; opacity:0; transition:opacity .15s; }
+  .k:hover .acts2 { opacity:1; }
+</style>
+</head>
+<body>
+  <!-- 方案1 -->
+  <div class="col">
+    <div class="banner"><b>方案 1</b> · 悬浮操作清单（推荐）—— 单行紧凑，操作按钮 hover 才出现；<br>活动任务 = 左侧红竖条 + 淡红底（不再整框红边）；完成 = 灰色划线 + 绿色✓</div>
+    <div class="card">
+      <div class="head"><h3>今日任务</h3><span>1 / 8 个番茄</span></div>
+      <div class="add"><input placeholder="添加新任务...（N）"><div class="plus">＋</div></div>
+      <div class="date"><span class="t">今天</span><span class="line"></span></div>
+      <div class="row active">
+        <div class="cb on"></div><div class="nm">测试2</div><div class="cnt">🍅 ×1</div>
+        <div class="acts"><div class="abtn">✓</div><div class="abtn">📦</div><div class="abtn del">✕</div></div>
+      </div>
+      <div class="row done-row">
+        <div class="cb done">✓</div><div class="nm">测试</div><div class="cnt">🍅 ×2</div>
+        <div class="tm">15:03</div>
+      </div>
+      <div class="row">
+        <div class="cb"></div><div class="nm">写周报</div><div class="cnt">🍅 ×0</div>
+        <div class="tm">14:20</div>
+      </div>
+      <div class="row">
+        <div class="cb"></div><div class="nm">背单词 50 个</div><div class="cnt">🍅 ×0</div>
+        <div class="tm">13:05</div>
+      </div>
+      <div class="hint"> hover 行时右侧浮出 ✓ / 📦 / ✕，时间常态显示 </div>
+    </div>
+  </div>
+
+  <!-- 方案2 -->
+  <div class="col">
+    <div class="banner"><b>方案 2</b> · 双行信息卡 —— 上行任务名+状态徽章，下行元信息；<br>专注中的任务有呼吸红点 + "专注中"标签，状态一目了然</div>
+    <div class="card">
+      <div class="head"><h3>今日任务</h3><span>1 / 8 个番茄</span></div>
+      <div class="add"><input placeholder="添加新任务...（N）"><div class="plus">＋</div></div>
+      <div class="date"><span class="t">今天</span><span class="line"></span></div>
+      <div class="k active">
+        <div class="l1"><div class="cb on"></div><div class="nm2">测试2</div><div class="tag">● 专注中</div></div>
+        <div class="l2"><span class="live"><span class="dot"></span>第 1 个番茄进行中</span><span class="meta">15:03 创建</span>
+          <div class="acts2"><div class="abtn">✓</div><div class="abtn">📦</div><div class="abtn del">✕</div></div>
+        </div>
+      </div>
+      <div class="k done-k">
+        <div class="l1"><div class="cb done">✓</div><div class="nm2">测试</div><div class="tag ok">已完成</div></div>
+        <div class="l2"><span class="meta">🍅 ×2 · 50 分钟</span><span class="meta">15:03 创建</span></div>
+      </div>
+      <div class="k">
+        <div class="l1"><div class="cb"></div><div class="nm2">写周报</div></div>
+        <div class="l2"><span class="meta">未开始</span><span class="meta">14:20 创建</span></div>
+      </div>
+      <div class="k">
+        <div class="l1"><div class="cb"></div><div class="nm2">背单词 50 个</div></div>
+        <div class="l2"><span class="meta">未开始</span><span class="meta">13:05 创建</span></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

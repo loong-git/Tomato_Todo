@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>历史任务弹窗 · 两个优化方向</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:"Segoe UI","Microsoft YaHei",sans-serif; }
+  body { background:#211d1a; display:flex; gap:28px; align-items:flex-start; padding:28px; min-height:100vh; }
+  .col { flex:1; }
+  .banner { color:#8a837c; font-size:13px; margin-bottom:12px; }
+  .banner b { color:#ff6b5b; }
+  /* 模拟弹窗面板 */
+  .panel { width:100%; height:560px; background:#1f1915; border:1px solid rgba(255,255,255,.08);
+           border-radius:14px; display:flex; flex-direction:column; overflow:hidden;
+           box-shadow:0 16px 48px rgba(0,0,0,.5); }
+  .p-head { display:flex; align-items:center; justify-content:space-between; padding:16px 18px 12px;
+            border-bottom:1px solid rgba(255,255,255,.06); }
+  .p-head h3 { font-size:15px; color:#faf5f0; font-weight:600; }
+  .p-actions { display:flex; gap:8px; }
+  .p-btn { padding:6px 12px; border-radius:8px; background:rgba(255,255,255,.06); color:#8a827a; font-size:12px; }
+  .p-btn.danger { color:#e77; }
+  .p-close { width:26px; height:26px; border-radius:6px; background:rgba(255,255,255,.06);
+             color:#8a827a; display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .p-body { flex:1; overflow:auto; padding:14px 18px 16px; }
+
+  /* ===== 共用：分段标题 ===== */
+  .sec { display:flex; align-items:center; gap:10px; margin:14px 0 8px; }
+  .sec:first-child { margin-top:0; }
+  .sec .t { font-size:12px; color:#8a827a; letter-spacing:1px; }
+  .sec .line { flex:1; height:1px; background:rgba(255,255,255,.06); }
+
+  /* ===== 方案1 · 极简清单 ===== */
+  .h-row { display:flex; align-items:center; gap:12px; padding:10px 8px; border-radius:9px; }
+  .h-row:hover { background:rgba(255,255,255,.04); }
+  .st { width:19px; height:19px; border-radius:50%; flex-shrink:0;
+        display:flex; align-items:center; justify-content:center; font-size:11px; }
+  .st.done { background:rgba(46,204,113,.18); color:#2ecc71; }
+  .st.exp { background:rgba(255,255,255,.07); color:#6d655d; }
+  .h-name { flex:1; font-size:13.5px; color:#d8d0c6; }
+  .h-row.done .h-name { color:#8a827a; text-decoration:line-through; text-decoration-color:rgba(255,255,255,.25); }
+  .h-row.exp .h-name { color:#c4bdb5; }
+  .h-po { font-size:11.5px; color:#8a827a; white-space:nowrap; }
+  .h-po b { color:#c4bdb5; font-weight:600; }
+  .h-time { font-size:11px; color:#6d655d; font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+  /* ===== 方案2 · 时间线卡片 ===== */
+  .tl { position:relative; padding-left:26px; }
+  .tl::before { content:""; position:absolute; left:8px; top:14px; bottom:14px; width:2px;
+                background:rgba(255,255,255,.07); border-radius:1px; }
+  .tl-date { position:relative; margin:14px 0 8px; }
+  .tl-date:first-child { margin-top:0; }
+  .tl-dot { position:absolute; left:-26px; top:2px; width:12px; height:12px; border-radius:50%;
+            background:#e74c3c; box-shadow:0 0 0 3px rgba(231,76,60,.18); }
+  .tl-dot.mute { background:#5a524a; box-shadow:0 0 0 3px rgba(255,255,255,.05); }
+  .tl-date .d { font-size:12px; color:#c4bdb5; font-weight:600; }
+  .tl-date .w { font-size:11px; color:#6d655d; margin-left:6px; }
+  .tcard { background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.05);
+           border-radius:10px; padding:11px 14px; margin-bottom:6px;
+           display:flex; align-items:center; gap:12px; }
+  .tcard:hover { background:rgba(255,255,255,.06); }
+  .tcard .nm { flex:1; font-size:13px; color:#d8d0c6; }
+  .tcard.done .nm { color:#8a827a; text-decoration:line-through; text-decoration-color:rgba(255,255,255,.25); }
+  .tcard .badge { font-size:11px; padding:3px 10px; border-radius:10px; white-space:nowrap; }
+  .badge.ok { background:rgba(46,204,113,.14); color:#2ecc71; }
+  .badge.overdue { background:rgba(231,76,60,.14); color:#ff8a7a; }
+  .tcard .po2 { font-size:11.5px; color:#c4bdb5; white-space:nowrap; }
+  .tcard .po2 small { color:#6d655d; }
+</style>
+</head>
+<body>
+  <!-- 方案1 -->
+  <div class="col">
+    <div class="banner"><b>方案 1</b> · 极简清单 —— 无卡片无边框，靠图标/颜色区分状态，最安静</div>
+    <div class="panel">
+      <div class="p-head">
+        <h3>历史任务</h3>
+        <div class="p-actions"><span class="p-btn danger">清除</span><span class="p-close">✕</span></div>
+      </div>
+      <div class="p-body">
+        <div class="sec"><span class="t">已完成</span><span class="line"></span></div>
+        <div class="h-row done"><div class="st done">✓</div><div class="h-name">算法题</div><div class="h-po">🍅 ×<b>5</b></div><div class="h-time">13:38</div></div>
+        <div class="h-row done"><div class="st done">✓</div><div class="h-name">八股文</div><div class="h-po">🍅 ×<b>5</b></div><div class="h-time">08:33</div></div>
+        <div class="h-row done"><div class="st done">✓</div><div class="h-name">八股文</div><div class="h-po">🍅 ×<b>3</b></div><div class="h-time">10:10</div></div>
+        <div class="sec"><span class="t">过期未完成</span><span class="line"></span></div>
+        <div class="h-row exp"><div class="st exp">○</div><div class="h-name">day 0</div><div class="h-po">🍅 ×<b>1</b></div><div class="h-time">16:29</div></div>
+        <div class="h-row exp"><div class="st exp">○</div><div class="h-name">day01</div><div class="h-po">🍅 ×<b>1</b></div><div class="h-time">15:25</div></div>
+        <div class="h-row exp"><div class="st exp">○</div><div class="h-name">复盘周记</div><div class="h-po">🍅 ×<b>0</b></div><div class="h-time">09:02</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 方案2 -->
+  <div class="col">
+    <div class="banner"><b>方案 2</b> · 时间线卡片 —— 日期圆点 + 竖轴，卡片承载状态徽章，更有"回顾"感</div>
+    <div class="panel">
+      <div class="p-head">
+        <h3>历史任务</h3>
+        <div class="p-actions"><span class="p-btn danger">清除</span><span class="p-close">✕</span></div>
+      </div>
+      <div class="p-body">
+        <div class="tl">
+          <div class="tl-date"><div class="tl-dot"></div><span class="d">7月31日</span><span class="w">周五</span></div>
+          <div class="tcard done"><div class="nm">算法题</div><div class="po2">🍅 ×5 <small>· 2h 05m</small></div><div class="badge ok">已完成</div></div>
+          <div class="tcard done"><div class="nm">八股文</div><div class="po2">🍅 ×5 <small>· 2h 05m</small></div><div class="badge ok">已完成</div></div>
+          <div class="tl-date"><div class="tl-dot mute"></div><span class="d">7月28日</span><span class="w">周二</span></div>
+          <div class="tcard done"><div class="nm">八股文</div><div class="po2">🍅 ×3 <small>· 1h 15m</small></div><div class="badge ok">已完成</div></div>
+          <div class="tcard"><div class="nm">day 0</div><div class="po2">🍅 ×1 <small>· 25m</small></div><div class="badge overdue">未完成</div></div>
+          <div class="tl-date"><div class="tl-dot mute"></div><span class="d">7月27日</span><span class="w">周一</span></div>
+          <div class="tcard"><div class="nm">day01</div><div class="po2">🍅 ×1 <small>· 25m</small></div><div class="badge overdue">未完成</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

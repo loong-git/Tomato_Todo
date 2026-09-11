@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useTaskStore, useTimerStore } from '@/stores'
+import { useTaskStore, useTimerStore, useStatsStore, useSettingsStore } from '@/stores'
 import { playCelebrationSound } from '@/utils'
 import { toast } from '@/utils/toast'
 
 const taskStore = useTaskStore()
 const timerStore = useTimerStore()
+const statsStore = useStatsStore()
+const settingsStore = useSettingsStore()
 
 const emit = defineEmits<{
   (e: 'task-completed'): void
@@ -15,6 +17,8 @@ const newTaskName = ref('')
 const showArchived = ref(false)
 const showHistory = ref(false)
 const strikingTaskId = ref<string | null>(null)
+// [改版] 刚完成标记：驱动"叮咚"拍动画（绿圈 pop + 绿光 wash），~1s 后移除避免列表重渲染时重复播放
+const justDoneTaskId = ref<string | null>(null)
 
 function getDateKey(timestamp: number): string {
   const date = new Date(timestamp)
@@ -38,6 +42,32 @@ function getDateKey(timestamp: number): string {
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp)
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
+// [改版 方案2 时间线] 日期组的星期几
+function getWeekday(timestamp: number): string {
+  return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date(timestamp).getDay()]
+}
+
+// [改版 方案2 时间线] 任务在"创建当日"的真实专注时长（该日该任务的 records 累加）
+function taskDayDuration(taskId: string, createdAt: number): number {
+  const d = new Date(createdAt)
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const end = start + 86400000
+  let seconds = 0
+  statsStore.records.forEach(r => {
+    if (r.taskId === taskId && r.type === 'focus' && r.completedAt >= start && r.completedAt < end) {
+      seconds += r.duration
+    }
+  })
+  return seconds
+}
+
+// 秒 → "2h 05m" / "45m"
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.round((seconds % 3600) / 60)
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
 interface TaskGroup {
@@ -105,6 +135,9 @@ function toggleComplete(taskId: string) {
       setTimeout(() => {
         taskStore.completeTask(taskId)
         strikingTaskId.value = null
+        // [改版] t=0.5s 划线结束瞬间（"叮"）：绿圈 pop + 绿光 wash（"咚"）
+        justDoneTaskId.value = taskId
+        setTimeout(() => { justDoneTaskId.value = null }, 900)
         emit('task-completed')
       }, 500)
     }
@@ -153,16 +186,31 @@ function deleteArchivedTask(taskId: string) {
 
 <template>
   <div class="task-list">
+    <!-- 番茄 icon 公共渐变（icon.svg 同源形象；同文档 defs 全局引用，避免 v-for 重复 id） -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <radialGradient id="tomatoIconGrad" cx="35%" cy="35%" r="65%">
+          <stop offset="0%" stop-color="#ff6b5b"/>
+          <stop offset="100%" stop-color="#e74c3c"/>
+        </radialGradient>
+      </defs>
+    </svg>
+    <div class="card-head">
+      <h3>今日任务</h3>
+      <div class="fold-right">
+        <span class="fold-count">{{ statsStore.todayCount }} / {{ settingsStore.settings.dailyGoal }} 个番茄</span>
+      </div>
+    </div>
     <div class="add-task">
       <input
         v-model="newTaskName"
         type="text"
-        placeholder="添加新任务..."
+        placeholder="添加新任务...（N）"
         class="task-input"
         @keyup.enter="addTask"
       />
       <button class="add-btn" @click="addTask">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5">
           <line x1="12" y1="5" x2="12" y2="19"/>
           <line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
@@ -175,29 +223,39 @@ function deleteArchivedTask(taskId: string) {
         <div
           v-for="task in group.tasks"
           :key="task.id"
-          class="task-item"
-          :class="{ active: timerStore.currentTaskIds.includes(task.id), striking: strikingTaskId === task.id, completed: task.isCompleted }"
+          class="tcard2"
+          :class="{ active: timerStore.currentTaskIds.includes(task.id), striking: strikingTaskId === task.id, done: task.isCompleted, 'just-done': justDoneTaskId === task.id }"
           @click="!task.isCompleted && selectTask(task.id)"
         >
-          <div class="task-main">
-            <div class="task-name-wrapper">
-              <span class="task-name">{{ task.name }}</span>
-              <span class="tooltip">{{ task.name }}</span>
+          <div class="l1">
+            <div v-if="task.isCompleted" class="cb2 did">
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
-            <span class="task-time">{{ formatTime(task.createdAt) }}</span>
+            <div class="task-name-wrapper" :title="task.name">
+              <span class="nm2">{{ task.name }}</span>
+            </div>
+            <span v-if="task.isCompleted" class="tag ok">已完成</span>
+            <span v-else-if="timerStore.currentTaskIds.includes(task.id) && timerStore.isRunning" class="tag live-tag">专注中</span>
           </div>
-          <span class="pomodoro-badge" v-if="task.completedPomodoros > 0">
-            {{ task.completedPomodoros }}
-          </span>
-          <template v-if="!task.isCompleted">
-            <button
-              v-if="strikingTaskId !== task.id"
-              class="done-btn"
-              @click.stop="toggleComplete(task.id)"
-            >完成</button>
-            <button class="archive-btn" @click.stop="archiveTask(task.id)" title="归档">📦</button>
-            <button class="delete-btn" @click.stop="deleteTask(task.id)">×</button>
-          </template>
+          <div class="l2">
+            <span v-if="timerStore.currentTaskIds.includes(task.id) && timerStore.isRunning && !task.isCompleted" class="live"><span class="dot"></span>第 {{ task.completedPomodoros + 1 }} 个番茄进行中</span>
+            <span class="meta"><svg class="ticon" viewBox="0 0 64 64"><ellipse cx="32" cy="38" rx="26" ry="24" fill="url(#tomatoIconGrad)"/><ellipse cx="23" cy="31" rx="9" ry="7" fill="rgba(255,255,255,.35)"/><path d="M32 18 C29 11 22 11 20 15 C18 19 23 22 27 21 C29 19 30 19 32 18" fill="#4a7c59"/><path d="M32 18 C35 11 42 11 44 15 C46 19 41 22 37 21 C35 19 34 19 32 18" fill="#5a8c69"/><path d="M32 18 C31 9 36 6 38 9 C40 12 36 17 32 18" fill="#3d6b4a"/><path d="M32 18 C33 9 28 6 26 9 C24 12 28 17 32 18" fill="#4a7c59"/><rect x="30" y="15" width="4" height="5" rx="1.5" fill="#4a7c59"/></svg> ×{{ task.completedPomodoros }}<template v-if="task.isCompleted && taskDayDuration(task.id, task.createdAt) > 0"> · {{ formatDuration(taskDayDuration(task.id, task.createdAt)) }}</template></span>
+            <span class="meta">{{ formatTime(task.createdAt) }} 创建</span>
+            <div class="acts2" v-if="!task.isCompleted">
+              <button
+                v-if="strikingTaskId !== task.id"
+                class="done-btn"
+                @click.stop="toggleComplete(task.id)"
+                title="完成"
+              >
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </button>
+              <button class="archive-btn" @click.stop="archiveTask(task.id)" title="归档">📦</button>
+              <button class="delete-btn" @click.stop="deleteTask(task.id)">×</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -234,47 +292,26 @@ function deleteArchivedTask(taskId: string) {
               <div class="empty-title">暂无历史任务</div>
               <div class="empty-hint">昨天及之前的任务会显示在这里</div>
             </div>
-            <!-- 过期任务 -->
-            <template v-if="historyTaskGroups.some(g => g.tasks.some(t => !t.isCompleted))">
-              <div class="history-section-title">过期</div>
-              <div v-for="group in historyTaskGroups" :key="'expired-' + group.dateKey">
-                <template v-if="group.tasks.some(t => !t.isCompleted)">
-                  <div class="date-header">{{ group.dateKey }}</div>
-                  <div v-for="task in group.tasks.filter(t => !t.isCompleted)" :key="task.id" class="task-item expired">
-                    <div class="task-main">
-                      <div class="task-name-wrapper">
-                        <span class="task-name">{{ task.name }}</span>
-                        <span class="tooltip">{{ task.name }}</span>
-                      </div>
-                      <span class="task-time">{{ formatTime(task.createdAt) }}</span>
-                    </div>
-                    <span class="expired-badge">过期</span>
-                  </div>
-                </template>
+            <!-- [改版 方案2] 时间线：日期圆点 + 竖轴 + 状态卡片 -->
+            <div v-else class="timeline">
+              <div v-for="group in historyTaskGroups" :key="group.dateKey" class="tl-group">
+                <div class="tl-date">
+                  <div class="tl-dot" :class="{ mute: !group.tasks.some(t => t.isCompleted) }"></div>
+                  <span class="d">{{ group.dateKey }}</span>
+                  <span class="w">{{ getWeekday(group.tasks[0].createdAt) }}</span>
+                </div>
+                <div
+                  v-for="task in group.tasks"
+                  :key="task.id"
+                  class="tcard"
+                  :class="{ done: task.isCompleted }"
+                >
+                  <span class="nm">{{ task.name }}</span>
+                  <span class="po2"><svg class="ticon" viewBox="0 0 64 64"><ellipse cx="32" cy="38" rx="26" ry="24" fill="url(#tomatoIconGrad)"/><ellipse cx="23" cy="31" rx="9" ry="7" fill="rgba(255,255,255,.35)"/><path d="M32 18 C29 11 22 11 20 15 C18 19 23 22 27 21 C29 19 30 19 32 18" fill="#4a7c59"/><path d="M32 18 C35 11 42 11 44 15 C46 19 41 22 37 21 C35 19 34 19 32 18" fill="#5a8c69"/><path d="M32 18 C31 9 36 6 38 9 C40 12 36 17 32 18" fill="#3d6b4a"/><path d="M32 18 C33 9 28 6 26 9 C24 12 28 17 32 18" fill="#4a7c59"/><rect x="30" y="15" width="4" height="5" rx="1.5" fill="#4a7c59"/></svg> ×{{ task.completedPomodoros }}<small v-if="taskDayDuration(task.id, task.createdAt) > 0"> · {{ formatDuration(taskDayDuration(task.id, task.createdAt)) }}</small></span>
+                  <span class="badge" :class="task.isCompleted ? 'ok' : 'overdue'">{{ task.isCompleted ? '已完成' : '未完成' }}</span>
+                </div>
               </div>
-            </template>
-
-            <!-- 已完成任务 -->
-            <template v-if="historyTaskGroups.some(g => g.tasks.some(t => t.isCompleted))">
-              <div class="history-section-title">已完成</div>
-              <div v-for="group in historyTaskGroups" :key="'completed-' + group.dateKey">
-                <template v-if="group.tasks.some(t => t.isCompleted)">
-                  <div class="date-header">{{ group.dateKey }}</div>
-                  <div v-for="task in group.tasks.filter(t => t.isCompleted)" :key="task.id" class="task-item completed">
-                    <div class="task-main">
-                      <div class="task-name-wrapper">
-                        <span class="task-name">{{ task.name }}</span>
-                        <span class="tooltip">{{ task.name }}</span>
-                      </div>
-                      <span class="task-time">{{ formatTime(task.createdAt) }}</span>
-                    </div>
-                    <span class="pomodoro-badge" v-if="task.completedPomodoros > 0">
-                      {{ task.completedPomodoros }}
-                    </span>
-                  </div>
-                </template>
-              </div>
-            </template>
+            </div>
           </div>
         </div>
       </div>
@@ -324,25 +361,403 @@ function deleteArchivedTask(taskId: string) {
 </template>
 
 <style scoped>
+/* ===== [改版 方案2] 历史任务时间线 ===== */
+.timeline {
+  position: relative;
+  padding-left: 26px;
+}
+
+.timeline::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: var(--border-color);
+  border-radius: 1px;
+}
+
+.tl-group {
+  margin-bottom: 14px;
+}
+
+.tl-date {
+  position: relative;
+  margin: 12px 0 8px;
+}
+
+.tl-date:first-child {
+  margin-top: 0;
+}
+
+.tl-dot {
+  position: absolute;
+  left: -26px;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--tomato);
+  box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.18);
+}
+
+.tl-dot.mute {
+  background: var(--text-muted);
+  opacity: 0.55;
+  box-shadow: 0 0 0 3px var(--bg-secondary);
+}
+
+.tl-date .d {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tl-date .w {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+.tcard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 11px 14px;
+  margin-bottom: 6px;
+  transition: background 0.15s ease;
+}
+
+.tcard:hover {
+  filter: brightness(1.06);
+}
+
+.tcard .nm {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tcard.done .nm {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--border-color);
+}
+
+.tcard .po2 {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tcard .po2 small {
+  color: var(--text-muted);
+}
+
+.tcard .badge {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.tcard .badge.ok {
+  background: rgba(46, 204, 113, 0.14);
+  color: #2ecc71;
+}
+
+.tcard .badge.overdue {
+  background: rgba(231, 76, 60, 0.14);
+  color: var(--tomato-light);
+}
+
+/* ===== [改版 方案2] 主任务双行信息卡 ===== */
+.tcard2 {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  margin-bottom: 6px;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.tcard2:hover {
+  border-color: var(--text-muted);
+}
+
+.tcard2.active {
+  border-color: rgba(231, 76, 60, 0.55);
+  background: rgba(231, 76, 60, 0.06);
+}
+
+.tcard2.done {
+  cursor: default;
+  background: var(--task-completed-bg);
+  border-color: transparent;
+}
+
+/* [改版] 完成动画 A 方案+轻沉降，节拍对齐音效（0s 沙沙起 → 0.5s 叮 → 0.68s 咚）：
+   striking（0~0.5s）：卡片轻沉降 + 红光 wash + 红线划过任务名（配沙沙笔触声）
+   just-done（0.5s~）：绿圈 pop（配"叮"）+ 绿光 wash（配"咚"） */
+.tcard2.striking {
+  animation: task-strike 0.5s cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+@keyframes task-strike {
+  0% {
+    background: rgba(231, 76, 60, 0.22);
+    box-shadow: 0 0 18px rgba(231, 76, 60, 0.3);
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(0.985);
+  }
+  100% {
+    background: var(--bg-card);
+    box-shadow: none;
+    transform: scale(1);
+  }
+}
+
+/* 红线划过任务名（沙沙声 0.5s 同步） */
+.tcard2.striking .nm2::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 3px;
+  width: 0;
+  background: var(--tomato);
+  border-radius: 1.5px;
+  transform: translateY(-50%);
+  animation: nm-strike 0.5s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+
+@keyframes nm-strike {
+  to { width: 100%; }
+}
+
+/* "叮"（t=0.5s）：绿圈弹跳出现 + 对勾画出 */
+.tcard2.just-done .cb2.did {
+  animation: cb-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.tcard2.just-done .cb2.did svg polyline {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: cb-check 0.25s ease-out 0.1s forwards;
+}
+
+@keyframes cb-pop {
+  0% { transform: scale(0); }
+  70% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+@keyframes cb-check {
+  to { stroke-dashoffset: 0; }
+}
+
+/* "咚"（t=0.5s 起）：绿光 wash 收尾 */
+.tcard2.just-done {
+  animation: done-wash 0.55s ease-out;
+}
+
+@keyframes done-wash {
+  0% {
+    background: rgba(74, 124, 89, 0.2);
+    box-shadow: 0 0 18px rgba(74, 124, 89, 0.28);
+  }
+  100% {
+    background: var(--task-completed-bg);
+    box-shadow: none;
+  }
+}
+
+.l1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cb2 {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.6px solid var(--text-muted);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+}
+
+.cb2.on {
+  border-color: var(--tomato);
+}
+
+.cb2.did {
+  background: #27ae60;
+  border-color: #27ae60;
+  color: #fff;
+}
+
+.l1 .task-name-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+
+.nm2 {
+  font-size: 13.5px;
+  color: var(--text-primary);
+  font-weight: 500;
+  position: relative;
+}
+
+.tcard2.done .nm2 {
+  color: var(--text-muted);
+  font-weight: 400;
+  text-decoration: line-through;
+  text-decoration-color: var(--border-color);
+}
+
+.tag {
+  font-size: 10.5px;
+  padding: 2px 9px;
+  border-radius: 9px;
+  flex-shrink: 0;
+}
+
+.tag.ok {
+  background: rgba(46, 204, 113, 0.14);
+  color: #2ecc71;
+}
+
+.tag.live-tag {
+  background: rgba(231, 76, 60, 0.16);
+  color: var(--tomato-light);
+}
+
+.l2 {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-left: 0;
+}
+
+.live {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--tomato-light);
+  white-space: nowrap;
+}
+
+.live .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tomato);
+  animation: live-blink 1.2s infinite;
+}
+
+@keyframes live-blink {
+  50% { opacity: 0.3; }
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.acts2 {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.tcard2:hover .acts2 {
+  opacity: 1;
+}
+
+
+/* [改版] 卡片容器（网格: tasks 区） */
 .task-list {
-  padding: 8px 16px 24px;
+  grid-area: tasks;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: 0 2px 12px var(--shadow);
+}
+
+.card-head {
+  margin-bottom: 8px;
+}
+
+.card-head h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fold-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fold-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* [改版] 番茄 icon（内联 SVG，icon.svg 同源形象）：15px、基线对齐、贴紧数量 */
+.ticon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  display: inline-block;
+  vertical-align: -3px;
+  margin-right: 0;
 }
 
 .add-task {
   display: flex;
-  gap: 10px;
-  margin-bottom: 16px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .task-input {
   flex: 1;
-  padding: 14px 18px;
+  padding: 9px 14px;
   border: 1px solid var(--border-color);
-  border-radius: 14px;
-  background: var(--bg-card);
+  border-radius: 10px;
+  background: var(--bg-primary);
   color: var(--text-primary);
   font-family: 'DM Sans', sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   outline: none;
   transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
@@ -357,23 +772,22 @@ function deleteArchivedTask(taskId: string) {
 }
 
 .add-btn {
-  width: 48px;
-  height: 48px;
+  width: 38px;
+  height: 38px;
   border: none;
-  border-radius: 14px;
-  background: linear-gradient(135deg, var(--tomato) 0%, var(--tomato-dark) 100%);
+  border-radius: 10px;
+  background: var(--tomato);
   color: #fff;
-  font-size: 24px;
+  font-size: 20px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  transition: transform 0.2s ease, background 0.2s ease;
 }
 
 .add-btn:hover {
-  transform: scale(1.05);
-  box-shadow: 0 6px 25px rgba(231, 76, 60, 0.4);
+  background: var(--tomato-light);
 }
 
 .add-btn:active {
@@ -381,12 +795,14 @@ function deleteArchivedTask(taskId: string) {
 }
 
 .task-groups {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* [改版] 列表随中行高度伸缩（窗口最大化时中行被 1fr 拉高，列表跟着变高可看更多任务） */
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 240px;
-  overflow-y: auto;
-  padding-right: 10px;
+  padding-right: 6px;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(231, 76, 60, 0.2) transparent;
@@ -458,15 +874,24 @@ function deleteArchivedTask(taskId: string) {
   margin-bottom: 12px;
 }
 
+/* [改版] 日期组标题：小字 + 延伸分隔线 */
 .date-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-family: 'DM Sans', sans-serif;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--text-muted);
-  padding: 6px 8px;
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
+  padding: 2px 2px 6px;
+  margin-bottom: 2px;
+}
+
+.date-header::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-color);
 }
 
 .date-header.completed {
@@ -478,24 +903,21 @@ function deleteArchivedTask(taskId: string) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
+  padding: 10px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
   cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-  backdrop-filter: blur(10px);
+  transition: all 0.18s ease;
 }
 
 .task-item:hover {
   background: var(--bg-secondary);
-  transform: translateX(4px);
 }
 
 .task-item.active {
   background: var(--bg-secondary);
   border-color: var(--tomato);
-  box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.2);
 }
 
 .task-item.completed {
@@ -505,7 +927,6 @@ function deleteArchivedTask(taskId: string) {
 }
 
 .task-item.completed:hover {
-  transform: none;
   background: var(--task-completed-bg);
 }
 
@@ -534,23 +955,28 @@ function deleteArchivedTask(taskId: string) {
   animation: task-flash 0.6s ease-out;
 }
 
+/* [改版] 完成按钮 C 方案·重构：静置=暗底灰勾（低调融入），hover=红渐变实底白勾 */
 .done-btn {
-  padding: 6px 14px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border: none;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #4ecdc4 0%, #3dbdb5 100%);
-  color: #fff;
-  font-family: 'DM Sans', sans-serif;
-  font-size: 12px;
-  font-weight: 600;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.18s ease;
   flex-shrink: 0;
 }
 
 .done-btn:hover {
-  transform: scale(1.05);
-  box-shadow: 0 4px 15px rgba(78, 205, 196, 0.4);
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
+  color: #fff;
+  transform: scale(1.08);
+  box-shadow: 0 1px 8px rgba(231, 76, 60, 0.4);
 }
 
 .completing-icon {
@@ -704,14 +1130,14 @@ function deleteArchivedTask(taskId: string) {
 }
 
 .delete-btn {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 18px;
+  font-size: 15px;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -724,14 +1150,14 @@ function deleteArchivedTask(taskId: string) {
 }
 
 .archive-btn {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 12px;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;

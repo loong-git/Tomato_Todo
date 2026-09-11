@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>方案AB · 布局撑满 + 本周柱状图</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:"Segoe UI","Microsoft YaHei",sans-serif; }
+  body { background:#d9d6d2; display:flex; flex-direction:column; align-items:center; padding:20px; min-height:100vh; }
+  .banner { margin-bottom:12px; color:#555; font-size:13px; }
+  .banner b { color:#e74c3c; }
+  .win { width:940px; height:740px; background:#f6f4f2; border-radius:12px; overflow:hidden;
+         box-shadow:0 20px 60px rgba(0,0,0,.2); display:flex; flex-direction:column; }
+  /* 标题栏 */
+  .titlebar { height:42px; display:flex; align-items:center; padding:0 8px 0 16px; gap:10px;
+              background:#fff; border-bottom:1px solid #e9e2da; flex-shrink:0; }
+  .tomato { width:20px; height:20px; border-radius:50%;
+            background:radial-gradient(circle at 35% 35%,#ff6b5b,#e74c3c); }
+  .name { font-weight:600; color:#2d2a26; font-size:13px; }
+  .spacer { flex:1; }
+  .tbtn { width:30px; height:28px; border-radius:6px; display:flex; align-items:center; justify-content:center;
+          color:#a39b93; font-size:13px; }
+  /* 内容：撑满 */
+  .content { flex:1; min-height:0; padding:12px 20px 14px; display:flex; flex-direction:column; gap:12px; }
+  .card { background:#fff; border:1px solid #e9e2da; border-radius:14px; box-shadow:0 2px 10px rgba(45,36,32,.06); }
+  /* 计时卡 */
+  .timer-card { display:flex; align-items:center; gap:16px; padding:14px 20px; flex-shrink:0; }
+  .accent { width:5px; height:50px; border-radius:3px; background:#e74c3c; }
+  .big { font-size:48px; font-weight:700; color:#2d2a26; letter-spacing:1px; font-variant-numeric:tabular-nums; }
+  .modes { display:flex; gap:6px; margin-bottom:8px; }
+  .mode { padding:5px 12px; border-radius:13px; font-size:12px; background:#f0ebe5; color:#a39b93; }
+  .mode.on { background:#e74c3c; color:#fff; font-weight:600; }
+  .cur { font-size:12.5px; color:#a39b93; }
+  .cur b { color:#2d2a26; }
+  .ctl { margin-left:auto; display:flex; gap:8px; }
+  .ghost { width:40px; height:40px; border-radius:10px; background:#f0ebe5; color:#a39b93;
+           display:flex; align-items:center; justify-content:center; font-size:15px; }
+  .primary { height:40px; padding:0 24px; border-radius:20px; background:#e74c3c; color:#fff;
+             font-size:13.5px; font-weight:600; display:flex; align-items:center; gap:6px;
+             box-shadow:0 4px 14px rgba(231,76,60,.3); }
+  /* 中部双卡 */
+  .mid { flex:1; min-height:0; display:flex; gap:12px; }
+  .tasks-card { width:46%; padding:14px 16px; display:flex; flex-direction:column; min-height:0; }
+  .stats-card { flex:1; padding:14px 16px; display:flex; flex-direction:column; gap:12px; min-height:0; overflow:auto; }
+  .card-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .card-head h3 { font-size:14px; font-weight:600; color:#2d2a26; }
+  .card-head .act { display:flex; gap:8px; }
+  .mini-btn { padding:6px 11px; border-radius:8px; background:#f0ebe5; color:#a39b93; font-size:12px; }
+  .add { display:flex; gap:8px; margin-bottom:10px; }
+  .add input { flex:1; padding:9px 14px; border:1px solid #e9e2da; border-radius:10px; background:#f6f4f2;
+               font-size:13px; color:#2d2a26; }
+  .add .plus { width:38px; height:38px; border-radius:10px; background:#e74c3c; color:#fff;
+               display:flex; align-items:center; justify-content:center; font-size:18px; }
+  .tlist { flex:1; overflow:auto; }
+  .task { display:flex; align-items:center; gap:10px; padding:11px 10px; border-radius:9px; margin-bottom:2px; }
+  .task:hover { background:#f6f4f2; }
+  .task.on { background:#fdeeec; outline:1px solid #f7d9d5; }
+  .cb { width:18px; height:18px; border:1.5px solid #d8d0c6; border-radius:6px; flex-shrink:0; }
+  .task.on .cb { border-color:#e74c3c; }
+  .tn { font-size:13.5px; color:#2d2a26; flex:1; }
+  .task.on .tn { font-weight:600; }
+  .po { font-size:11.5px; color:#a39b93; background:#f0ebe5; border-radius:10px; padding:2px 9px; }
+  .task.on .po { background:#f9dcd8; color:#c2453a; }
+  .hist { margin-top:10px; padding:10px; border:1px dashed #ddd5cc; border-radius:9px;
+          color:#a39b93; font-size:12.5px; text-align:center; }
+  /* 今日目标 */
+  .goal { background:#f6f4f2; border-radius:10px; padding:12px 14px; }
+  .goal-head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .goal-ic { width:30px; height:30px; border-radius:8px; background:#f9dcd8; color:#e74c3c;
+             display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .goal-t { flex:1; }
+  .goal-t .l { font-size:11.5px; color:#a39b93; }
+  .goal-t .v { font-size:16px; font-weight:650; color:#2d2a26; }
+  .goal-t .v b { color:#e74c3c; }
+  .pct { font-size:12px; color:#c2453a; background:#f9dcd8; border-radius:9px; padding:3px 9px; font-weight:600; }
+  .bar { height:5px; background:#e9e2da; border-radius:3px; overflow:hidden; }
+  .bar .f { width:10%; height:100%; background:#e74c3c; border-radius:3px; }
+  /* ★ 本周柱状图（新增） */
+  .week { background:#f6f4f2; border-radius:10px; padding:12px 14px; }
+  .week-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px; }
+  .week-head .l { font-size:12px; color:#a39b93; }
+  .week-head .r { font-size:11.5px; color:#a39b93; }
+  .week-head .r b { color:#2d2a26; font-size:13px; }
+  .bars { display:flex; align-items:flex-end; gap:10px; height:88px; }
+  .bcol { flex:1; display:flex; flex-direction:column; align-items:center; gap:5px; height:100%; justify-content:flex-end; }
+  .bval { font-size:10.5px; color:#a39b93; }
+  .bar2 { width:100%; max-width:26px; border-radius:5px 5px 3px 3px; background:#f3cdc7; }
+  .bar2.max { background:#e74c3c; }
+  .bar2.zero { background:#e9e2da; height:5px !important; }
+  .bday { font-size:10.5px; color:#a39b93; }
+  .bcol.today .bday { color:#e74c3c; font-weight:600; }
+  /* 2×2 统计 */
+  .sgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .sc { background:#f6f4f2; border-radius:10px; padding:10px 12px; }
+  .sv { font-size:20px; font-weight:700; color:#2d2a26; font-variant-numeric:tabular-nums; }
+  .sv small { font-size:11px; color:#a39b93; font-weight:400; }
+  .sk { font-size:11px; color:#a39b93; margin-top:2px; }
+  /* 热力条 */
+  .heat { flex-shrink:0; padding:12px 16px; display:flex; align-items:center; gap:16px; }
+  .ht { flex-shrink:0; }
+  .ht .n { font-size:13px; font-weight:600; color:#2d2a26; }
+  .ht .s { font-size:11px; color:#a39b93; margin-top:2px; }
+  .cells { flex:1; display:flex; gap:3px; }
+  .c { flex:1; max-width:22px; height:26px; border-radius:4px; background:#e9e2da; }
+  .c.l1 { background:#f6c8c2; } .c.l2 { background:#ee9d94; }
+  .c.l3 { background:#e5695c; } .c.l4 { background:#c0392b; }
+  .c.today { box-shadow:inset 0 0 0 1.5px #e74c3c; }
+  .hs { flex-shrink:0; display:flex; align-items:center; gap:10px; }
+  .hs .t { font-size:12px; color:#a39b93; }
+  .hs .t b { color:#2d2a26; font-size:13px; }
+  .hbtn { padding:6px 11px; border-radius:8px; background:#f0ebe5; color:#a39b93; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="banner"><b>方案 A+B</b> · 布局撑满（无死空隙）+ 数据卡新增「本周柱状图」 · 940×740</div>
+<div class="win">
+  <div class="titlebar">
+    🍅<div class="name">番茄TODO</div><div class="spacer"></div>
+    <div class="tbtn">☀</div><div class="tbtn">▢</div><div class="tbtn">⛶</div><div class="tbtn">⚙ 设置</div><div class="tbtn">─</div><div class="tbtn">✕</div>
+  </div>
+  <div class="content">
+    <!-- 计时卡 -->
+    <div class="card timer-card">
+      <div class="accent"></div><div class="big">24:38</div>
+      <div>
+        <div class="modes"><div class="mode on">专注</div><div class="mode">短休息</div><div class="mode">长休息</div></div>
+        <div class="cur">正在专注 · <b>算法题 · 动态规划</b></div>
+      </div>
+      <div class="ctl"><div class="ghost">↺</div><div class="primary">⏸ 暂停</div><div class="ghost">⏭</div></div>
+    </div>
+    <!-- 中部双卡 -->
+    <div class="mid">
+      <div class="card tasks-card">
+        <div class="card-head"><h3>今日任务</h3><span class="mini-btn" style="cursor:default">3/8 个番茄</span></div>
+        <div class="add"><input placeholder="添加新任务...（N）"><div class="plus">＋</div></div>
+        <div class="tlist">
+          <div class="task on"><div class="cb"></div><div class="tn">算法题 · 动态规划</div><div class="po">🍅 ×3</div></div>
+          <div class="task"><div class="cb"></div><div class="tn">写周报</div><div class="po">🍅 ×2</div></div>
+          <div class="task"><div class="cb"></div><div class="tn">背单词 50 个</div><div class="po">🍅 ×1</div></div>
+          <div class="task"><div class="cb"></div><div class="tn">整理错题本</div><div class="po">🍅 ×0</div></div>
+        </div>
+        <div class="hist">🕒 历史任务 (30)</div>
+      </div>
+      <div class="card stats-card">
+        <div class="card-head"><h3>数据</h3><div class="act"><span class="mini-btn">⬇ 数据</span><span class="mini-btn">☰ 详细数据</span></div></div>
+        <div class="goal">
+          <div class="goal-head">
+            <div class="goal-ic">🕐</div>
+            <div class="goal-t"><div class="l">今日目标</div><div class="v"><b>0.4</b> / 4 小时</div></div>
+            <div class="pct">10.4%</div>
+          </div>
+          <div class="bar"><div class="f"></div></div>
+        </div>
+        <!-- ★ 新增：本周柱状图 -->
+        <div class="week">
+          <div class="week-head"><span class="l">本周番茄</span><span class="r">共 <b>18</b> 个 · 比上周 +20%</span></div>
+          <div class="bars">
+            <div class="bcol"><div class="bval">2</div><div class="bar2" style="height:22%"></div><div class="bday">一</div></div>
+            <div class="bcol"><div class="bval">4</div><div class="bar2" style="height:44%"></div><div class="bday">二</div></div>
+            <div class="bcol"><div class="bval">3</div><div class="bar2" style="height:33%"></div><div class="bday">三</div></div>
+            <div class="bcol"><div class="bval">0</div><div class="bar2 zero"></div><div class="bday">四</div></div>
+            <div class="bcol"><div class="bval">5</div><div class="bar2 max" style="height:55%"></div><div class="bday">五</div></div>
+            <div class="bcol"><div class="bval">4</div><div class="bar2" style="height:44%"></div><div class="bday">六</div></div>
+            <div class="bcol today"><div class="bval">0</div><div class="bar2 zero"></div><div class="bday">日</div></div>
+          </div>
+        </div>
+        <div class="sgrid">
+          <div class="sc"><div class="sv">1.6<small> 小时</small></div><div class="sk">今日专注</div></div>
+          <div class="sc"><div class="sv">30<small> 天</small></div><div class="sk">连续记录</div></div>
+          <div class="sc"><div class="sv">382</div><div class="sk">累计番茄</div></div>
+          <div class="sc"><div class="sv">157.5<small> h</small></div><div class="sk">累计专注</div></div>
+        </div>
+      </div>
+    </div>
+    <!-- 热力条 -->
+    <div class="card heat">
+      <div class="ht"><div class="n">专注热力</div><div class="s">9月 · 每格一天</div></div>
+      <div class="cells">
+        <div class="c l2"></div><div class="c l1"></div><div class="c l3"></div><div class="c l1"></div>
+        <div class="c l4"></div><div class="c l2"></div><div class="c l3"></div><div class="c"></div>
+        <div class="c l1"></div><div class="c l2"></div><div class="c l4"></div><div class="c l3"></div>
+        <div class="c l1"></div><div class="c l2"></div><div class="c"></div><div class="c l3"></div>
+        <div class="c l2"></div><div class="c l1"></div><div class="c l4"></div><div class="c l2"></div>
+        <div class="c l3"></div><div class="c l1"></div><div class="c l2"></div><div class="c l3"></div>
+        <div class="c l1"></div><div class="c l2"></div><div class="c l4"></div><div class="c l3"></div>
+        <div class="c l2"></div><div class="c today"></div>
+      </div>
+      <div class="hs"><span class="t">本月 <b>29</b> 个番茄 · <b>12.1</b> 小时</span><span class="hbtn">完整日历 ›</span></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

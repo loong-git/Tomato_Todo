@@ -39,7 +39,7 @@ function checkConflict(shortcut: string, excludeField: keyof ShortcutConfig): st
   for (const k of Object.keys(localSettings.value.shortcuts) as Array<keyof ShortcutConfig>) {
     if (k === excludeField) continue
     if (localSettings.value.shortcuts[k] === shortcut) {
-      const label = k === 'toggleFullscreen' ? '切全屏专注' : '切小窗专注'
+      const label = k === 'toggleFullscreen' ? '切沉浸模式' : '切小窗专注'
       return `与"${label}"快捷键冲突`
     }
   }
@@ -174,7 +174,12 @@ defineExpose({ open, close })
 </script>
 
 <template>
-  <button class="settings-btn" @click="open">⚙ 设置</button>
+  <button class="settings-btn" title="设置 (S)" @click="open">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+  </button>
 
   <!-- 自定义设置弹窗 -->
   <Teleport to="body">
@@ -343,8 +348,8 @@ defineExpose({ open, close })
 
           <div class="setting-item shortcut-item">
             <div class="setting-label">
-              <span class="label-text">切全屏专注</span>
-              <span class="label-hint">主窗口 → 全屏专注(在专注窗口内 = 返回主窗口)</span>
+              <span class="label-text">切沉浸模式</span>
+              <span class="label-hint">主窗口 → 沉浸模式(在专注窗口内 = 返回主窗口)</span>
             </div>
             <div class="shortcut-control">
               <span
@@ -435,20 +440,30 @@ defineExpose({ open, close })
 </template>
 
 <style scoped>
+/* [改版] 纯图标化，尺寸/hover 与标题栏 window-btn 完全一致 */
 .settings-btn {
+  width: 30px;
+  height: 28px;
   border: none;
   background: transparent;
-  color: #a89f97;
-  font-size: 14px;
+  border-radius: 6px;
   cursor: pointer;
-  padding: 8px 12px;
-  border-radius: 8px;
-  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-muted);
+  transition: all 0.15s;
 }
 
 .settings-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #f5f0e8;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.light-theme .settings-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #2d2420;
 }
 
 .settings-overlay {

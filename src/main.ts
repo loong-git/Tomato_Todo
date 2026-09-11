@@ -61,6 +61,10 @@ if (!isFocusWindow) {
 }
 
 const app = createApp(App)
+// [L3 崩溃捕获·渲染侧] Vue 全局错误钩子：组件内未捕获异常带完整堆栈，经 console-message 转发进 log.txt
+app.config.errorHandler = (err, _instance, info) => {
+  console.error(`[VueError] (${info})`, err instanceof Error ? err.stack : err)
+}
 app.use(createPinia())
 app.use(ElementPlus)
 app.mount('#app')

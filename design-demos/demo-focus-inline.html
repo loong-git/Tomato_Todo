@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>方案1 Demo：全屏专注改为主窗口内嵌视图</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", -apple-system, sans-serif;
+    background: #222; color: #333;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+    padding: 24px;
+  }
+  .tip { color: #ccc; font-size: 14px; }
+  .tip b { color: #e74c3c; }
+
+  /* ===== 模拟主窗口 ===== */
+  .app {
+    width: 1100px; height: 640px;
+    background: #f6f4f2;
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  /* 标题栏 */
+  .title-bar {
+    height: 40px; background: #fff; border-bottom: 1px solid #e5e0da;
+    display: flex; align-items: center; padding: 0 12px; gap: 8px;
+    font-size: 13px; font-weight: 600;
+  }
+  .logo-dot { width: 18px; height: 18px; border-radius: 50%; background: #e74c3c; }
+  .title-bar .blank { flex: 1; }
+  .title-bar .btn { width: 26px; height: 26px; border-radius: 6px; background: #eee; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #888; }
+  .title-bar .btn.red { background: #e74c3c; color: #fff; }
+
+  /* 仪表盘主体 */
+  .dash { padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; height: calc(100% - 40px); }
+  .timer-row {
+    background: #fff; border-radius: 12px; padding: 16px 20px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .timer-num { font-size: 44px; font-weight: 800; color: #e74c3c; }
+  .pill { padding: 5px 14px; border-radius: 999px; font-size: 12px; background: #f0ece7; color: #888; }
+  .pill.on { background: #e74c3c; color: #fff; }
+  .timer-row .sp { flex: 1; }
+  .start-btn { background: #e74c3c; color: #fff; border: none; border-radius: 999px; padding: 10px 30px; font-size: 15px; font-weight: 700; }
+  .mid { display: flex; gap: 12px; flex: 1; min-height: 0; }
+  .card { background: #fff; border-radius: 12px; padding: 14px; font-size: 13px; }
+  .card h4 { font-size: 13px; margin-bottom: 10px; }
+  .tasks { width: 46%; }
+  .trow { background: #f6f4f2; border-radius: 8px; padding: 9px 12px; margin-bottom: 8px; color: #666; }
+  .stats { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  .srow { display: flex; gap: 10px; flex: 1; }
+  .scell { flex: 1; background: #f6f4f2; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; justify-content: center; }
+  .scell b { font-size: 20px; }
+  .heat { background: #fff; border-radius: 12px; padding: 10px 16px; display: flex; align-items: center; gap: 4px; }
+  .heat .cell { width: 16px; height: 16px; border-radius: 3px; background: #eee; }
+  .heat .cell.h1 { background: #f5b7ae; } .heat .cell.h2 { background: #ec7063; } .heat .cell.h3 { background: #c0392b; }
+
+  /* ===== ★ 内嵌全屏专注覆盖层（新方案核心） ===== */
+  .focus-overlay {
+    position: absolute; inset: 0; z-index: 99;
+    background: #161210;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .3s ease;
+  }
+  .app.focusing .focus-overlay { opacity: 1; pointer-events: auto; }
+  .focus-task { color: #9a8f85; font-size: 15px; letter-spacing: 1px; }
+  .focus-time {
+    font-size: 150px; font-weight: 800; color: #faf5f0;
+    font-variant-numeric: tabular-nums; line-height: 1;
+  }
+  .focus-time .accent { color: #e74c3c; }
+  .focus-btns { display: flex; gap: 16px; }
+  .fbtn { background: #2a231e; color: #faf5f0; border: 1px solid #3a322b; border-radius: 999px; padding: 10px 28px; font-size: 14px; cursor: pointer; }
+  .fbtn.primary { background: #e74c3c; border-color: #e74c3c; font-weight: 700; }
+  .focus-esc { color: #6b6058; font-size: 12px; }
+  .focus-esc kbd { background: #2a231e; border: 1px solid #3a322b; border-radius: 4px; padding: 2px 7px; font-size: 11px; color: #c9beb4; }
+
+  .demo-btns { display: flex; gap: 12px; }
+  .demo-btns button { padding: 10px 22px; border-radius: 8px; border: 1px solid #555; background: #333; color: #eee; cursor: pointer; font-size: 14px; }
+  .demo-btns button:hover { background: #444; }
+</style>
+</head>
+<body>
+  <div class="tip">点击下方按钮模拟 → <b>「⛶ 全屏专注」= 主窗口原地切换覆盖层</b>，计时数据不搬家、退出即回仪表盘（demo 里按 <b>Esc</b> 或"退出专注"返回）</div>
+  <div class="demo-btns">
+    <button onclick="document.querySelector('.app').classList.add('focusing')">进入全屏专注（内嵌）</button>
+    <button onclick="document.querySelector('.app').classList.remove('focusing')">退出专注（= Esc）</button>
+  </div>
+
+  <div class="app" id="app">
+    <div class="title-bar">
+      <div class="logo-dot"></div> 番茄TODO
+      <div class="blank"></div>
+      <span class="btn">☾</span><span class="btn">⛶</span><span class="btn">⚙</span>
+      <span class="btn">—</span><span class="btn">□</span><span class="btn red">×</span>
+    </div>
+    <div class="dash">
+      <div class="timer-row">
+        <span class="timer-num">25:00</span>
+        <span class="pill on">专注</span><span class="pill">短休息</span><span class="pill">长休息</span>
+        <span class="sp"></span>
+        <button class="start-btn">▶ 开始</button>
+      </div>
+      <div class="mid">
+        <div class="card tasks">
+          <h4>今日任务</h4>
+          <div class="trow">✓ 完成周报初稿</div>
+          <div class="trow">✓ 代码 review</div>
+          <div class="trow">○ 处理邮件</div>
+        </div>
+        <div class="stats">
+          <div class="card" style="flex:1">
+            <h4>数据</h4>
+            <div class="srow">
+              <div class="scell"><b>25</b>分钟</div>
+              <div class="scell"><b>1/8</b>完成番茄</div>
+            </div>
+            <div class="srow" style="margin-top:10px">
+              <div class="scell"><b>40天</b>连续记录</div>
+              <div class="scell"><b>3.33</b>昨日小时</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="heat">
+        <span style="font-size:12px;color:#888;margin-right:8px">专注热力</span>
+        <span class="cell h2"></span><span class="cell h3"></span><span class="cell h1"></span>
+        <span class="cell h2"></span><span class="cell h3"></span><span class="cell"></span><span class="cell h1"></span>
+        <span class="cell"></span><span class="cell"></span><span class="cell h2"></span><span class="cell"></span>
+        <span style="flex:1"></span>
+        <span style="font-size:12px;color:#888">本月 29 个番茄 · 12.1 小时　完整日历 ›</span>
+      </div>
+    </div>
+
+    <!-- ★ 内嵌专注覆盖层：z-index 盖住仪表盘，计时直接读 store，无需跨窗口同步 -->
+    <div class="focus-overlay">
+      <div class="focus-task">正在专注 · 完成周报初稿</div>
+      <div class="focus-time">25<span class="accent">:</span>00</div>
+      <div class="focus-btns">
+        <button class="fbtn primary" onclick="toggle(this)">⏸ 暂停</button>
+        <button class="fbtn" onclick="skip()">跳过本番茄</button>
+        <button class="fbtn" onclick="document.getElementById('app').classList.remove('focusing')">✕ 退出专注</button>
+      </div>
+      <div class="focus-esc">「跳过」= 提前结束本番茄进入休息；「退出」= 回主界面，计时继续 · <kbd>Esc</kbd> 退出</div>
+    </div>
+  </div>
+
+<script>
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') document.getElementById('app').classList.remove('focusing')
+  })
+  function toggle(btn) {
+    const t = document.querySelector('.focus-time')
+    const running = t.dataset.run !== '0'
+    t.dataset.run = running ? '0' : '1'
+    btn.textContent = running ? '▶ 继续' : '⏸ 暂停'
+  }
+  function skip() { document.getElementById('app').classList.remove('focusing') }
+</script>
+</body>
+</html>

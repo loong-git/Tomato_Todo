@@ -19,7 +19,7 @@ export interface PomodoroRecord {
 export type SoundType = 'bell' | 'forest' | 'ding' | 'tick' | 'custom'
 
 export interface ShortcutConfig {
-  /** 主窗口 → 切全屏专注(在 FocusWindow 内 = 返回主窗口) */
+  /** 主窗口 → 切沉浸模式(在 FocusWindow 内 = 返回主窗口) */
   toggleFullscreen: string
   /** 主窗口 → 切小窗专注(在 FocusWindow 内 = 返回主窗口) */
   toggleCompact: string

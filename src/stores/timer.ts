@@ -25,12 +25,26 @@ export const useTimerStore = defineStore('timer', () => {
   // [P1-5 修复] 计时基准时间戳：Date.now() - (duration - timeLeft) * 1000
   // 计时改为基于时间戳差值计算剩余秒数，避免 1000ms setInterval + IPC 耗时累计漂移
   let timerStartBaseMs = 0
+  // [Bug1 修复] 上一次 tick 的时刻，用于检测系统睡眠/挂起导致的时钟跳变
+  let lastTickMs = 0
 
   // [P2-11 修复] 音频自然播放结束（自定义文件）→ 停止音频按钮自动隐藏
   if (window.electronAPI?.audio?.onEnd) {
     window.electronAPI.audio.onEnd(() => {
       isAudioPlaying.value = false
       console.log('[Timer] 音频播放结束，隐藏停止音频按钮')
+    })
+  }
+
+  // [L4 睡眠精确处理] 系统唤醒 → 把睡眠时长从计时基准中精确扣除
+  // 比 startTicking 里的 90s 启发式更可靠（powerMonitor 直报睡眠时长，不怕校时误判）
+  if (window.electronAPI?.power?.onSystemResume) {
+    window.electronAPI.power.onSystemResume((gapMs: number) => {
+      if (timerInterval && isRunning.value && gapMs > 2000) {
+        timerStartBaseMs += gapMs  // 睡眠时间不计入专注
+        lastTickMs = Date.now()
+        console.log(`[Timer] 系统唤醒（睡眠 ${Math.round(gapMs / 1000)}s），专注从剩余时间继续`)
+      }
     })
   }
 
@@ -66,7 +80,7 @@ export const useTimerStore = defineStore('timer', () => {
     if (window.electronAPI) {
       try {
         const data = await window.electronAPI.store.get('streakData') as { streakCount: number; lastCompletionDate: string } | undefined
-        console.log('[Timer] 原始数据:', data)
+        console.log('[Timer] 原始数据:', JSON.stringify(data))
         const today = new Date().toDateString()
         const yesterday = new Date()
         yesterday.setDate(yesterday.getDate() - 1)
@@ -303,14 +317,35 @@ export const useTimerStore = defineStore('timer', () => {
     if (timerInterval) return  // 安全防止重复启动
     const duration = currentDuration.value
     timerStartBaseMs = Date.now() - (duration - timeLeft.value) * 1000
+    lastTickMs = Date.now()
+    // [Bug1 诊断] 记录启动时的关键参数，用于排查"第一个番茄提前完成"
+    // [L5 日志门控] TimerDebug 仅 dev 输出，打包时 import.meta.env.DEV 为 false，代码被静态剔除
+    if (import.meta.env.DEV) {
+      console.log(`[TimerDebug] startTicking: mode=${mode.value} duration=${duration} timeLeft=${timeLeft.value} baseMs=${timerStartBaseMs} now=${Date.now()}`)
+    }
     timerInterval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - timerStartBaseMs) / 1000)
+      const now = Date.now()
+      // [Bug1 修复] 检测时间跳变（系统睡眠/休眠/挂起/时钟调整）：
+      // 跳变期间进程被冻结，用户并未专注，不应计入 elapsed。
+      // 否则唤醒后第一个 tick 的 elapsed 虚高，剩余时间断崖归零、番茄被误判完成
+      // （实际只专注了几十秒）。阈值 90s：Chromium 后台 intensive throttling
+      // 单次最长约 60s，不会误伤正常后台节流。
+      const gap = now - lastTickMs
+      if (gap > 90000) {
+        timerStartBaseMs += gap - 1000  // 平移基准：跳变期只计 1 秒正常流逝
+        console.log(`[Timer] 检测到时间跳变 ${Math.round(gap / 1000)}s（睡眠/挂起），已从计时基准扣除，专注从剩余时间继续`)
+      }
+      lastTickMs = now
+      const elapsed = Math.floor((now - timerStartBaseMs) / 1000)
       const remain = Math.max(0, duration - elapsed)
       if (timeLeft.value !== remain) {
         timeLeft.value = remain
         emitStateChange()
       }
       if (remain <= 0 && timeLeft.value === 0) {
+        if (import.meta.env.DEV) {
+          console.log(`[TimerDebug] 触发 complete: elapsed=${elapsed} duration=${duration} remain=${remain}`)
+        }
         complete()
       }
     }, 200)
@@ -412,15 +447,18 @@ export const useTimerStore = defineStore('timer', () => {
     emitStateChange()
   }
 
+  // [改版 互斥单选] 点已选中 → 取消选中；点别的 → 替换选中
+  // 一个番茄只账给一个任务（record 的 taskId 口径与历史/连胜重算一致）
   function toggleCurrentTask(taskId: string) {
     const index = currentTaskIds.value.indexOf(taskId)
     if (index !== -1) {
-      currentTaskIds.value.splice(index, 1)
-      console.log('[Timer] 任务移出选中:', taskId)
+      currentTaskIds.value = []
+      console.log('[Timer] 任务取消选中:', taskId)
     } else {
-      currentTaskIds.value.push(taskId)
-      console.log('[Timer] 任务加入选中:', taskId)
+      currentTaskIds.value = [taskId]
+      console.log('[Timer] 任务切换选中:', taskId)
     }
+    emitStateChange()
   }
 
   function resetPomodoroCount() {

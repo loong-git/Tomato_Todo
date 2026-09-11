@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, Notification, dialog, Menu, Tray, nativeImage } from 'electron'
 import { join } from 'path'
-import { readFileSync, writeFileSync, appendFileSync } from 'fs'
+import { readFileSync, writeFileSync } from 'fs'
 import Store from 'electron-store'
 
 // Windows 下修复中文乱码：将控制台代码页切换到 UTF-8 (65001)
@@ -55,12 +55,14 @@ let mainWindow: BrowserWindow | null = null
 let focusWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let sharedTimerState = { timeLeft: 25 * 60, mode: 'focus', isRunning: false, justCompleted: false, total: 25 * 60, currentTaskName: '', currentTaskIds: [] as string[] }
+// [L2 日志降噪] 状态转发签名去重：只记录 isRunning/justCompleted/mode 变化，不记录每秒 timeLeft 递减
+let lastStateSignature = ''
 let isQuitting = false
 
 // 专注窗口状态机（单一权威源）
 type FocusWindowState =
   | { kind: 'closed' }
-  | { kind: 'open'; mode: 'compact' | 'fullscreen' }
+  | { kind: 'open'; mode: 'compact' }
 let focusState: FocusWindowState = { kind: 'closed' }
 
 // 关闭动画意图（与结构状态正交）
@@ -69,18 +71,8 @@ let closeAnimationNeeded = false
 // 并发打开守卫（连续 Alt+F 保护）
 let pendingFocusOpen = false
 
-// 日志写入文件
-const logFile = join(__dirname, '../../log.txt')
-function fileLog(msg: string) {
-  const time = new Date().toLocaleTimeString('zh-CN')
-  const line = `[${time}] ${msg}\n`
-  try {
-    appendFileSync(logFile, line)
-  } catch (e) {
-    console.error('日志写入失败:', e)
-  }
-  console.log(msg)
-}
+// 日志统一走 logger.ts（userData/log.txt）
+import { fileLog, debugLog } from './logger'
 
 // 创建托盘图标
 function createTray() {
@@ -195,17 +187,41 @@ function formatTime(seconds: number): string {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
+// [改版] 窗口基准：宽 1056、高 720（物理像素，按内容实测贴合无空底），按显示器缩放换算成 DIP
+let MIN_WIN_W = 1056
+let WIN_H = 720
+
+function initWindowSize() {
+  const { screen } = require('electron')
+  const sf = screen.getPrimaryDisplay().scaleFactor || 1
+  MIN_WIN_W = Math.round(1056 / sf)
+  WIN_H = Math.round(720 / sf)
+  fileLog(`[Window] initWindowSize: sf=${sf} MIN_WIN_W=${MIN_WIN_W} WIN_H=${WIN_H} display=${JSON.stringify(screen.getPrimaryDisplay().bounds)}`)
+}
+
 function createWindow() {
   // 从store读取主题设置
   const settings = store.get('settings', {}) as { theme?: string }
   const savedTheme = settings.theme || 'dark'
   const bgColor = savedTheme === 'light' ? '#f5f2ef' : '#1a1614'
 
+  // 按当前显示器缩放换算窗口基准尺寸（物理 1056x752）
+  initWindowSize()
+
   mainWindow = new BrowserWindow({
-    width: 400,
-    height: 700,
-    minWidth: 360,
-    minHeight: 600,
+    width: MIN_WIN_W,
+    height: WIN_H,
+    // [改版] 高度锁死（min=max），宽度最小 = 截图基准（按缩放换算）。
+    // resizable 必须为 true：Windows 下 resizable:false 会剥掉最大化样式位，
+    // 导致双击标题最大化手势失效且窗口错位。仅右缘调宽的限制由下方
+    // will-resize 守卫实现：x/高度变化一律拒绝，只放行"x 不动只变宽"的右缘拖拽。
+    minWidth: MIN_WIN_W,
+    minHeight: WIN_H,
+    maxHeight: WIN_H,
+    resizable: true,
+    // 双击标题栏拖动区的原生最大化有半屏 bug（resizable+污染的还原位置），已禁用；
+    // 最大化走自定义通道：双击 logo / ▢ 按钮 → window:toggle-maximize IPC
+    maximizable: false,
     // 窗口图标（dev 模式下让 Alt+Tab 切换和任务栏预览显示番茄；任务栏本身的图标由 .exe 决定，dev 模式改不了）
     icon: join(__dirname, '../../icon.ico'),
     webPreferences: {
@@ -217,6 +233,42 @@ function createWindow() {
     transparent: false,
     show: true,
     backgroundColor: bgColor
+  })
+
+  // [改版] 仅右缘调宽守卫：x 或高度变化（左缘/上下/角拖拽）一律拒绝，
+  // 只放行"x 不动、高度不变、仅宽度变化"的右缘拖拽，宽度夹紧到 [MIN_WIN_W, 屏幕右界]。
+  // 最大化/还原过程放行（目标≈工作区，否则会把最大化拦腰截断导致窗口跳左上角）
+  mainWindow.on('will-resize', (event, newBounds) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    // 程序化 setBounds 放行（否则会拦截我们自己的最大化/还原/调宽）
+    if (applyingBounds) return
+    // 自定义最大化期间：锁死一切系统缩放
+    if (customMaxBounds) {
+      event.preventDefault()
+      return
+    }
+    const cur = mainWindow.getBounds()
+    const { screen } = require('electron')
+    const wa = screen.getDisplayMatching(cur).workArea
+    const nearWorkArea =
+      Math.abs(newBounds.x - wa.x) < 12 &&
+      Math.abs(newBounds.y - wa.y) < 12 &&
+      Math.abs(newBounds.width - wa.width) < 24 &&
+      Math.abs(newBounds.height - wa.height) < 24
+    if (nearWorkArea) return
+    if (newBounds.x !== cur.x || newBounds.height !== cur.height) {
+      event.preventDefault()
+      return
+    }
+    const maxW = Math.max(MIN_WIN_W, wa.width - cur.x - 8)
+    if (newBounds.width < MIN_WIN_W || newBounds.width > maxW) {
+      event.preventDefault()
+      programmaticSetBounds({
+        x: cur.x, y: cur.y,
+        width: Math.max(MIN_WIN_W, Math.min(newBounds.width, maxW)),
+        height: cur.height
+      })
+    }
   })
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -233,6 +285,34 @@ function createWindow() {
   // 禁用主窗口背景节流，确保隐藏时计时器仍运行
   mainWindow.webContents.setBackgroundThrottling(false)
 }
+
+// [L3 崩溃捕获] 全局异常兜底——崩溃类问题必须留痕，否则日志完全沉默
+process.on('uncaughtException', (e) => {
+  fileLog(`[CRASH] uncaughtException: ${e?.stack || e}`)
+})
+process.on('unhandledRejection', (reason) => {
+  fileLog(`[CRASH] unhandledRejection: ${reason instanceof Error ? reason.stack : reason}`)
+})
+
+// [L4 睡眠精确处理] powerMonitor 监听系统睡眠/唤醒：
+// 睡眠期间进程冻结、用户并未专注，唤醒后把睡眠时长精确通知渲染进程，
+// 从计时基准中扣除（比 90s 启发式检测更可靠，不怕 NTP 校时误判）
+let suspendAtMs = 0
+app.whenReady().then(() => {
+  const { powerMonitor } = require('electron')
+  powerMonitor.on('suspend', () => {
+    suspendAtMs = Date.now()
+    fileLog('[Power] 系统睡眠')
+  })
+  powerMonitor.on('resume', () => {
+    const gap = suspendAtMs > 0 ? Date.now() - suspendAtMs : 0
+    suspendAtMs = 0
+    fileLog(`[Power] 系统唤醒，睡眠时长 ${Math.round(gap / 1000)}s`)
+    if (mainWindow && !mainWindow.isDestroyed() && gap > 2000) {
+      mainWindow.webContents.send('power:resumed', gap)
+    }
+  })
+})
 
 app.whenReady().then(() => {
   fileLog('[App] 应用准备就绪')
@@ -254,6 +334,10 @@ app.whenReady().then(() => {
   }
   // mainWindow destroyed 监听
   if (mainWindow) {
+    // [L3 崩溃捕获] 渲染进程异常退出必须留痕（白屏/闪退类问题的关键证据）
+    mainWindow.webContents.on('render-process-gone', (_e, details) => {
+      fileLog(`[CRASH] 渲染进程退出: reason=${details.reason} exitCode=${details.exitCode}`)
+    })
     mainWindow.webContents.on('destroyed', () => {
       fileLog(`[MAIN] ⚠️ mainWindow.webContents destroyed!`)
     })
@@ -268,9 +352,80 @@ app.on('window-all-closed', () => {
 })
 
 // IPC handlers
+// [改版] 仅右缘调宽：渲染进程拖拽把手发目标宽度，这里夹紧后改宽（高度/位置不变）
+// 最大化状态下忽略（不打断系统最大化）
+ipcMain.on('window:resize-to', (_event, width: number) => {
+  if (!mainWindow || mainWindow.isDestroyed() || customMaxBounds) return
+  const { screen } = require('electron')
+  const display = screen.getDisplayMatching(mainWindow.getBounds())
+  const maxW = Math.max(MIN_WIN_W, display.workArea.width - mainWindow.getPosition()[0] - 8)
+  const w = Math.max(MIN_WIN_W, Math.min(Math.round(width), maxW))
+  const [x, y] = mainWindow.getPosition()
+  programmaticSetBounds({ x, y, width: w, height: WIN_H })
+})
+
+// [改版] 自定义最大化：不用原生 maximize()（其依赖的 Windows 还原位置会被
+// will-resize preventDefault 污染成半屏），自己记住还原位置 + setBounds 到工作区
+let customMaxBounds: Electron.Rectangle | null = null
+
+// [改版] 程序化 setBounds 旗标：will-resize 守卫对程序化调用放行
+// （will-resize 对 setBounds 也会触发，若不豁免会把我们自己的最大化拦腰截断）
+let applyingBounds = false
+function programmaticSetBounds(b: Electron.Rectangle) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  applyingBounds = true
+  try {
+    mainWindow.setBounds(b)
+  } finally {
+    applyingBounds = false
+  }
+}
+
+ipcMain.on('window:toggle-maximize', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (customMaxBounds) {
+    // 还原：先回原尺寸（此时仍在放开的约束内），再恢复高度锁定
+    const b = customMaxBounds
+    customMaxBounds = null
+    programmaticSetBounds(b)
+    mainWindow.setMaximumSize(10000, WIN_H)
+    mainWindow.webContents.send('window:maxState', false)
+    fileLog(`[Window] 还原窗口: ${JSON.stringify(b)}（恢复 maxHeight=${WIN_H}）`)
+  } else {
+    // 最大化：BrowserWindow 的 maxHeight 会被 setBounds 遵守，
+    // 不解除会把工作区高度夹成 WIN_H → "半屏"。先放开再铺满。
+    // 用 display.bounds 整屏（含任务栏区域），用户要求最大化=铺满全屏
+    const cur = mainWindow.getBounds()
+    customMaxBounds = cur
+    mainWindow.setMaximumSize(10000, 10000)
+    const { screen } = require('electron')
+    const db = screen.getDisplayMatching(cur).bounds
+    programmaticSetBounds({ x: db.x, y: db.y, width: db.width, height: db.height })
+    mainWindow.webContents.send('window:maxState', true)
+    fileLog(`[Window] 自定义最大化 → 整屏: ${JSON.stringify(db)}（临时解除 maxHeight）`)
+  }
+})
+
 ipcMain.on('window:minimize', () => {
   mainWindow?.minimize()
 })
+
+// [方案1] 小窗专注控制按钮：转发给主窗口渲染进程的 timer store 执行
+ipcMain.on('focus:control', (_event, action: 'start' | 'pause' | 'skip') => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('focus:control', action)
+  fileLog(`[Focus] control: ${action}`)
+})
+
+// [需求] 小窗锁定：锁定后窗口不可拖动移动位置（movable:false），解锁恢复
+ipcMain.on('focus:toggle-lock', (_event, locked: boolean) => {
+  if (!focusWindow || focusWindow.isDestroyed()) return
+  focusWindow.setMovable(!locked)
+  fileLog(`[Focus] 小窗锁定: ${locked ? '锁定（禁止拖动）' : '解锁（可拖动）'}`)
+})
+
+// [修复] 标题栏拖动已改回系统原生（-webkit-app-region: drag），drag-by IPC 通道废弃删除。
+// 自实现 setPosition/setBounds 连发在 Windows DPI≠100% 下会拉宽窗口且失效。
 
 ipcMain.on('window:close', () => {
   console.log('[Window] 关闭按钮点击')
@@ -495,7 +650,7 @@ function resolveCurrentTaskName(currentTaskIds: string[]): string {
   return task?.name || ''
 }
 
-ipcMain.handle('focus:open', (_, data: { timeLeft: number; mode: string; isRunning: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }, mode?: 'compact' | 'fullscreen') => {
+ipcMain.handle('focus:open', (_, data: { timeLeft: number; mode: string; isRunning: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }, mode?: 'compact') => {
   const targetMode = mode || 'compact'
   // 兜底：主进程用 currentTaskIds 重新计算 currentTaskName（数据源是 store 里的 tasks）
   if (data.currentTaskIds) {
@@ -509,8 +664,8 @@ ipcMain.handle('focus:open', (_, data: { timeLeft: number; mode: string; isRunni
   openFocusWindow(targetMode, data)
 })
 
-// 打开专注窗口的内部函数（被 focus:open 共用）
-async function openFocusWindow(mode: 'compact' | 'fullscreen', data?: { timeLeft: number; mode: string; isRunning: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }) {
+// 打开小窗专注（compact 独立窗口）。[方案1] 全屏专注已改为主窗口内嵌覆盖层，此函数只服务 compact
+async function openFocusWindow(mode: 'compact', data?: { timeLeft: number; mode: string; isRunning: boolean; total: number; currentTaskName: string; currentTaskIds: string[] }) {
   // 状态守门
   if (focusState.kind === 'open' || pendingFocusOpen) {
     fileLog(`[Focus] openFocusWindow 已在打开中或已打开,忽略本次请求 (state=${JSON.stringify(focusState)})`)
@@ -525,52 +680,46 @@ async function openFocusWindow(mode: 'compact' | 'fullscreen', data?: { timeLeft
 
   pendingFocusOpen = true
   let newWindow: BrowserWindow | null = null
-  let isFullscreen = mode === 'fullscreen'
 
   try {
     const { screen } = require('electron')
     const display = screen.getPrimaryDisplay()
     const { width: sw, height: sh } = display.workAreaSize
 
+    // [需求] 固定 224x222（物理像素基准），按显示器缩放换算成 DIP——
+    // 与主窗口 initWindowSize 同一模式，不换算会导致高分屏上窗口偏大
+    const sf = display.scaleFactor || 1
+    const FW_W = Math.round(224 / sf)
+    const FW_H = Math.round(222 / sf)
+    fileLog(`[Focus] 小窗基准: sf=${sf} 224x222 → DIP ${FW_W}x${FW_H}`)
+
     // 隐藏主窗口
     mainWindow.hide()
     mainWindow.webContents.send('focus:modeChange', true)
     fileLog(`[Focus] mainWindow.hide() 后 → 即将创建 focusWindow, mode=${mode}`)
 
-    // 准备 BrowserWindow 配置
-    const winConfig: any = {
-      minWidth: 150,
-      minHeight: 150,
+    newWindow = new BrowserWindow({
+      width: FW_W,
+      height: FW_H,
+      x: sw - FW_W - 20,
+      y: 20,
       // 专注窗口图标（同样，dev 模式下改任务栏图标无能为力，只能让窗口本身有图标）
       icon: join(__dirname, '../../icon.ico'),
       frame: false,
       transparent: true,
+      roundedCorners: true,
+      backgroundColor: '#00000000',
       alwaysOnTop: true,
       skipTaskbar: true,
-      resizable: true,
+      resizable: false,
+      fullscreenable: false,
+      maximizable: false,
       webPreferences: {
         preload: join(__dirname, 'preload.js'),
         contextIsolation: true,
         nodeIntegration: false
       }
-    }
-
-    if (isFullscreen) {
-      winConfig.width = sw
-      winConfig.height = sh
-      winConfig.x = 0
-      winConfig.y = 0
-      // 全屏专注模式禁止拖动 + 禁止调整大小(只允许 Alt+F 或左上 × 返回主窗口)
-      winConfig.movable = false
-      winConfig.resizable = false
-    } else {
-      winConfig.width = 250
-      winConfig.height = 250
-      winConfig.x = sw - 270
-      winConfig.y = 20
-    }
-
-    newWindow = new BrowserWindow(winConfig)
+    })
 
     const focusUrl = process.env.VITE_DEV_SERVER_URL
       ? `${process.env.VITE_DEV_SERVER_URL}#/focus`
@@ -611,19 +760,6 @@ async function openFocusWindow(mode: 'compact' | 'fullscreen', data?: { timeLeft
     // 加载完成事件
     newWindow.webContents.on('did-finish-load', () => {
       fileLog(`[Focus] focusWindow did-finish-load → 共享 timeLeft=${sharedTimerState.timeLeft} isRunning=${sharedTimerState.isRunning}`)
-      // 推迟到 did-finish-load 之后,避免 loadURL 未完成时 setFullScreen 触发 webContents 重建
-      if (isFullscreen && newWindow && !newWindow.isDestroyed()) {
-        if (newWindow.isFullScreen()) {
-          fileLog(`[Focus] setFullScreen(true) 已被用户/系统切换,跳过`)
-          return
-        }
-        if (newWindow.webContents.isCrashed() || !newWindow.isVisible()) {
-          fileLog(`[Focus] setFullScreen(true) 跳过:webContents 异常或窗口不可见`)
-          return
-        }
-        fileLog(`[Focus] 推迟 setFullScreen(true) (loadURL 后)`)
-        newWindow.setFullScreen(true)
-      }
     })
 
     // webContents 重建监听
@@ -652,26 +788,28 @@ async function openFocusWindow(mode: 'compact' | 'fullscreen', data?: { timeLeft
   }
 }
 
-// 从 compact(250x250 角落位置)放大回主窗口(400x700 居中)动画
+// 从 compact(250x250 角落位置)放大回主窗口(1056x752 居中)动画
 function animateMainWindowRestore(targetWindow: BrowserWindow) {
   const { screen } = require('electron')
   const display = screen.getPrimaryDisplay()
   const { width: sw, height: sh } = display.workAreaSize
 
-  const targetW = 400
-  const targetH = 700
+  const targetW = MIN_WIN_W
+  const targetH = WIN_H
   const targetX = Math.round((sw - targetW) / 2)
   const targetY = Math.round((sh - targetH) / 2)
 
   const startW = 250
   const startH = 250
 
-  targetWindow.setBounds({
+  // programmaticSetBounds：will-resize 对 setBounds 也会触发，豁免守卫
+  // （动画高度从 250 变到 WIN_H，裸调会被守卫判为"高度变化"拦腰截断）
+  programmaticSetBounds({
     x: targetX,
     y: targetY,
     width: startW,
     height: startH
-  }, false)
+  })
   targetWindow.show()
 
   const duration = 300
@@ -683,22 +821,22 @@ function animateMainWindowRestore(targetWindow: BrowserWindow) {
     const elapsed = Date.now() - startTime
     const progress = Math.min(elapsed / duration, 1)
     const eased = easeOutCubic(progress)
-    targetWindow.setBounds({
+    programmaticSetBounds({
       x: targetX,
       y: targetY,
       width: Math.round(startW + (targetW - startW) * eased),
       height: Math.round(startH + (targetH - startH) * eased)
-    }, false)
+    })
     if (progress < 1) {
       setTimeout(animate, 16)
     }
   }
   animate()
-  fileLog('[Focus] 主窗口恢复动画启动 (250x250 → 400x700, 300ms)')
+  fileLog('[Focus] 主窗口恢复动画启动 (250x250 → 基准窗口, 300ms)')
 }
 
 ipcMain.handle('focus:getInitData', () => {
-  const focusMode: 'compact' | 'fullscreen' | null = focusState.kind === 'open' ? focusState.mode : null
+  const focusMode: 'compact' | null = focusState.kind === 'open' ? focusState.mode : null
   fileLog(`[Focus] getInitData → timeLeft=${sharedTimerState.timeLeft} isRunning=${sharedTimerState.isRunning} currentTaskName="${sharedTimerState.currentTaskName}" focusMode=${focusMode}`)
   return {
     ...sharedTimerState,
@@ -725,14 +863,18 @@ ipcMain.on('focus:sendState', (event, data: { timeLeft: number; mode: string; is
   }
   // 同步所有状态
   sharedTimerState = data
-  fileLog(`[主→专注] timeLeft:${data.timeLeft} isRunning:${data.isRunning}`)
 
-  // 同时发送给 focusWindow
+  // [L2 日志降噪] 每秒一次的 tick 转发不逐条记录，只在"关键状态签名"变化时记录
+  // （isRunning/justCompleted/mode 变化 = 事件；纯 timeLeft 递减 = 噪声）
+  const signature = `${data.isRunning}|${data.justCompleted}|${data.mode}`
+  if (signature !== lastStateSignature) {
+    fileLog(`[主→专注] 状态变化: isRunning=${data.isRunning} justCompleted=${data.justCompleted} mode=${data.mode} timeLeft=${data.timeLeft}`)
+    lastStateSignature = signature
+  }
+
+  // 同时发送给 focusWindow（窗口不存在是常态——用户没开专注模式，静默不记日志）
   if (focusWindow && !focusWindow.isDestroyed()) {
     focusWindow.webContents.send('focus:stateUpdate', sharedTimerState)
-    fileLog(`[主进程已转发到专注窗口] timeLeft:${data.timeLeft}`)
-  } else {
-    fileLog(`[主进程转发失败] focusWindow不存在`)
   }
 })
 
@@ -744,11 +886,6 @@ ipcMain.handle('focus:close', () => {
   }
 
   closeAnimationNeeded = true
-  // 先退出全屏（如果处于全屏状态），避免动画异常
-  if (focusWindow.isFullScreen()) {
-    fileLog('[Focus] close: 退出全屏状态')
-    focusWindow.setFullScreen(false)
-  }
   // 触发 closed 事件,所有状态清理与动画在那里统一执行
   focusWindow.close()
 })

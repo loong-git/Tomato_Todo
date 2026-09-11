@@ -42,6 +42,9 @@ export default defineConfig({
     outDir: 'dist'
   },
   server: {
-    port: 5173
+    // [改版] 独特端口 + strictPort：端口被占直接报错退出，不悄悄换端口
+    // （5173 曾被用户浏览器里同样跑在 5173 的页面占用，导致 CDP 验证连错页面）
+    port: 51731,
+    strictPort: true
   }
 })

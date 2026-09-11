@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useStatsStore, useSettingsStore, useTimerStore } from '@/stores'
 import { toast } from '@/utils/toast'
+import DataManager from '@/components/DataManager.vue'
 
 const statsStore = useStatsStore()
 const settingsStore = useSettingsStore()
@@ -475,18 +476,107 @@ const isBeforeRetention = computed(() => {
   return viewStart < retentionCutoff
 })
 
+// [改版] 底部单行热力条：当月每天一行格子 + 本月汇总 + 完整日历弹窗入口
+const showFullCalendar = ref(false)
+
+// 当月每天的格子数据（从月历周数据摊平、只留本月天）
+const monthStripDays = computed(() =>
+  heatmapData.value.flat().filter(d => d.isCurrentMonth)
+)
+
+// 本月汇总（按真实记录时长统计，非 25 分钟估算）
+const monthSummary = computed(() => {
+  const y = viewYear.value
+  const m = viewMonth.value
+  let count = 0
+  let seconds = 0
+  statsStore.records.forEach(r => {
+    if (r.type !== 'focus') return
+    const d = new Date(r.completedAt)
+    if (d.getFullYear() === y && d.getMonth() === m) {
+      count++
+      seconds += r.duration
+    }
+  })
+  return { count, hours: (seconds / 3600).toFixed(1) }
+})
+
+// 热力等级（条与月历共用）：0 无 / 1 = 1个 / 2 = 2-3个 / 3 = 4-5个 / 4 = 6+个
+function heatLevelClass(count: number): string {
+  if (count <= 0) return 'heat-l0'
+  if (count === 1) return 'heat-l1'
+  if (count <= 3) return 'heat-l2'
+  if (count <= 5) return 'heat-l3'
+  return 'heat-l4'
+}
+
+// [改版 A+B] 本周柱状图：周一 ~ 今天 每天番茄数（本地时区按天统计）
+const weekBars = computed(() => {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const dow = today.getDay() === 0 ? 7 : today.getDay()  // 周一=1 ... 周日=7
+  const monday = today.getTime() - (dow - 1) * 86400000
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const dayStart = monday + i * 86400000
+    const dayEnd = dayStart + 86400000
+    let count = 0
+    statsStore.records.forEach(r => {
+      if (r.type !== 'focus') return
+      if (r.completedAt >= dayStart && r.completedAt < dayEnd) count++
+    })
+    return { count, isToday: i === dow - 1, label: '一二三四五六日'[i] }
+  })
+  const total = days.reduce((s, d) => s + d.count, 0)
+  const max = Math.max(...days.map(d => d.count), 1)
+  return { days, total, max }
+})
+
+// 上周总数（用于环比）
+const lastWeekTotal = computed(() => {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const dow = today.getDay() === 0 ? 7 : today.getDay()
+  const thisMonday = today.getTime() - (dow - 1) * 86400000
+  const lastMonday = thisMonday - 7 * 86400000
+  let count = 0
+  statsStore.records.forEach(r => {
+    if (r.type !== 'focus') return
+    if (r.completedAt >= lastMonday && r.completedAt < thisMonday) count++
+  })
+  return count
+})
+
+// 环比文案
+const weekTrend = computed(() => {
+  const diff = weekBars.value.total - lastWeekTotal.value
+  if (lastWeekTotal.value === 0) return diff > 0 ? `比上周 +${diff}` : '—'
+  const pct = Math.round((diff / lastWeekTotal.value) * 100)
+  return pct >= 0 ? `比上周 +${pct}%` : `比上周 ${pct}%`
+})
+
+// 柱高（px）：最高的一天 52px，0 个 4px 灰块
+function barPx(count: number): number {
+  if (count <= 0) return 4
+  return Math.max(5, Math.round((count / weekBars.value.max) * 38))
+}
 
 </script>
 
 <template>
+  <!-- [改版] display:contents：.stats-block 落网格 stats 区，.heatmap-block 落 heat 区 -->
   <div class="stats-display">
+    <div class="stats-block">
     <div class="stats-header">
-      <button class="detail-btn" @click="showDetail = true" title="查看详细数据">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-          <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
-        </svg>
-        <span>详细数据</span>
-      </button>
+      <h3 class="block-title">数据</h3>
+      <div class="header-actions">
+        <DataManager />
+        <button class="detail-btn" @click="showDetail = true" title="查看详细数据">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+            <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+          </svg>
+          <span>详细数据</span>
+        </button>
+      </div>
     </div>
 
     <!-- 今日目标小时数（横条进度） -->
@@ -512,6 +602,30 @@ const isBeforeRetention = computed(() => {
       <div class="goal-progress">
         <!-- [需求] 进度条视觉满格即停（宽度封顶 100%），百分比数字显示真实值（可超 100%） -->
         <div class="goal-progress-fill" :style="{ width: Math.min(100, hourGoalPercent) + '%' }"></div>
+      </div>
+    </div>
+
+    <!-- [改版 A+B] 本周柱状图 -->
+    <div class="week-chart">
+      <div class="week-head">
+        <span class="wl">本周番茄</span>
+        <span class="wr">共 <b>{{ weekBars.total }}</b> 个 · {{ weekTrend }}</span>
+      </div>
+      <div class="bars">
+        <div
+          v-for="(d, i) in weekBars.days"
+          :key="i"
+          class="bcol"
+          :class="{ today: d.isToday }"
+        >
+          <span class="bval">{{ d.count }}</span>
+          <div
+            class="bar2"
+            :class="{ max: d.count > 0 && d.count === weekBars.max, zero: d.count === 0 }"
+            :style="{ height: barPx(d.count) + 'px' }"
+          ></div>
+          <span class="bday">{{ d.label }}</span>
+        </div>
       </div>
     </div>
 
@@ -702,8 +816,42 @@ const isBeforeRetention = computed(() => {
       </div>
     </div>
 
-    <!-- 热力图 -->
+    </div>
+
+    <!-- 热力图（底部整条）：单行热力条 + 完整日历弹窗 -->
+    <div class="heatmap-block">
     <div class="heatmap-container">
+      <!-- 单行热力条：标题左 / 格子中 / 汇总+入口右，一行对齐 -->
+      <div class="heat-strip">
+        <div class="strip-title">
+          <div class="strip-name">专注热力</div>
+          <div class="strip-sub">{{ viewMonth + 1 }}月 · 每格一天</div>
+        </div>
+        <div class="strip-cells">
+          <div
+            v-for="(d, i) in monthStripDays"
+            :key="i"
+            class="strip-cell"
+            :class="[heatLevelClass(d.count), { today: d.isToday }]"
+            :title="`${d.date}日: ${d.count > 0 ? d.count + '个番茄 / ' + (d.count * 25 / 60).toFixed(1) + '小时' : '未专注'}`"
+          >
+            <span v-if="d.isToday" class="strip-today-mark">今</span>
+          </div>
+        </div>
+        <div class="strip-summary">
+          <span class="sum-text">本月 <b>{{ monthSummary.count }}</b> 个番茄 · <b>{{ monthSummary.hours }}</b> 小时</span>
+          <button class="fullcal-btn" @click="showFullCalendar = true" title="查看完整月历">完整日历 ›</button>
+        </div>
+      </div>
+
+      <!-- 完整日历弹窗（原月历整体移入，与详细数据弹窗同款） -->
+      <div v-if="showFullCalendar" class="detail-modal" @click.self="showFullCalendar = false">
+        <div class="detail-modal-content">
+          <div class="detail-modal-header">
+            <h3>{{ viewTitle }} · 专注日历</h3>
+            <button class="close-btn" @click="showFullCalendar = false">×</button>
+          </div>
+          <div class="fullcal-body">
       <div class="heatmap-header">
         <button class="nav-btn" @click="prevMonth">&lt;</button>
         <!-- [热力图日历筛选] 点击标题弹出 modal -->
@@ -773,7 +921,7 @@ const isBeforeRetention = computed(() => {
             v-for="(day, di) in week"
             :key="di"
             class="calendar-cell"
-            :class="{ empty: !day.isCurrentMonth, completed: day.count > 0, today: day.isToday }"
+            :class="[heatLevelClass(day.count), { empty: !day.isCurrentMonth, today: day.isToday }]"
             :title="day.isCurrentMonth && day.count > 0 ? `${day.date}日: ${day.count}个番茄 / ${(day.count * 25 / 60).toFixed(1)}小时` : (day.isCurrentMonth ? `${day.date}日: 未专注` : '')"
           >
             <span v-if="day.isCurrentMonth" class="day-num">{{ day.isToday ? '今' : day.date }}</span>
@@ -786,35 +934,67 @@ const isBeforeRetention = computed(() => {
         <template v-if="isBeforeRetention">📅 此月份暂未显示记录</template>
         <template v-else>📅 此月份暂无专注记录</template>
       </div>
+          </div>
+        </div>
+      </div>
+    </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* [改版] 根容器透明化：.stats-block / .heatmap-block 作为 App 网格项 */
 .stats-display {
+  display: contents;
+}
+
+/* 右侧统计卡（网格: stats 区） */
+.stats-block {
+  grid-area: stats;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 16px 16px;
+  gap: 9px;
+  min-height: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: 0 2px 12px var(--shadow);
+  overflow-y: auto;
+}
+
+/* 底部热力条（网格: heat 区） */
+.heatmap-block {
+  grid-area: heat;
+}
+
+.block-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .stats-header {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
-  padding: 0 4px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .detail-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  color: var(--text-secondary);
+  gap: 5px;
+  padding: 6px 11px;
+  background: var(--bg-secondary);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-muted);
   font-size: 12px;
   font-family: 'DM Sans', sans-serif;
   cursor: pointer;
@@ -822,50 +1002,127 @@ const isBeforeRetention = computed(() => {
 }
 
 .detail-btn:hover {
-  background: rgba(231, 76, 60, 0.15);
-  color: #e74c3c;
-  border-color: rgba(231, 76, 60, 0.3);
+  background: rgba(231, 76, 60, 0.12);
+  color: var(--tomato);
 }
 
 .stats-cards {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 8px;
+  /* [改版] 拉伸占满统计卡剩余高度（最大化时四宫格随之变高） */
+  flex: 1.15;
+  min-height: 0;
 }
 
-/* 今日目标小时数 - 横条进度卡片 */
+/* [改版 A+B] 本周柱状图 */
+.week-chart {
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  padding: 9px 12px;
+  /* [改版] 拉伸占剩余高度，柱子贴底对齐 */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.week-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.week-head .wl {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.week-head .wr {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.week-head .wr b {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.bars {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex: 1;
+  min-height: 0;
+}
+
+.bcol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.bval {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.bar2 {
+  width: 100%;
+  max-width: 26px;
+  border-radius: 5px 5px 3px 3px;
+  background: var(--heatmap-2);
+  transition: height 0.3s ease;
+}
+
+.bar2.max {
+  background: var(--tomato);
+}
+
+.bar2.zero {
+  background: var(--heatmap-empty);
+  border-radius: 2px;
+}
+
+.bday {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.bcol.today .bday {
+  color: var(--tomato);
+  font-weight: 600;
+}
+
+/* 今日目标小时数 - 卡内区块（不再自带卡片壳） */
 .hour-goal-bar {
-  background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  padding: 14px 16px;
-  box-shadow: 0 4px 16px var(--shadow);
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--bg-secondary);
   transition: all 0.3s ease;
 }
 
-.hour-goal-bar:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 22px var(--shadow);
-}
-
 .hour-goal-bar.completed {
-  border-color: rgba(46, 204, 113, 0.4);
-  background: linear-gradient(135deg, var(--bg-card) 0%, rgba(46, 204, 113, 0.05) 100%);
+  background: rgba(46, 204, 113, 0.1);
 }
 
 .goal-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 6px;
 }
 
 .goal-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
   background: linear-gradient(135deg, rgba(231, 76, 60, 0.2) 0%, rgba(192, 57, 43, 0.15) 100%);
   color: var(--tomato);
   display: flex;
@@ -1251,59 +1508,31 @@ const isBeforeRetention = computed(() => {
 }
 
 .stat-card {
-  flex: 1;
-  max-width: 130px;
-  background: var(--bg-card);
-  backdrop-filter: blur(20px);
-  border-radius: 20px;
-  padding: 18px 14px;
-  text-align: center;
-  border: 1px solid var(--border-color);
-  box-shadow: 0 4px 16px var(--shadow);
-  transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.25s ease;
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  transition: background 0.2s ease;
+  /* [改版] 单元格拉高后内容垂直居中 */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .stat-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 28px var(--shadow);
+  background: var(--border-color);
 }
 
 .stat-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 12px;
-}
-
-.stat-icon.focus {
-  background: rgba(231, 76, 60, 0.15);
-  color: #e74c3c;
-}
-
-.stat-icon.completed {
-  background: rgba(52, 152, 219, 0.15);
-  color: #3498db;
-}
-
-.stat-icon.streak {
-  background: rgba(155, 89, 182, 0.15);
-  color: #9b59b6;
-}
-
-.stat-icon.yesterday {
-  background: rgba(26, 188, 156, 0.15);
-  color: #1abc9c;
+  display: none;
 }
 
 .stat-value {
   font-family: 'DM Serif Display', serif;
-  font-size: 26px;
+  font-size: 20px;
   font-weight: 400;
   color: var(--text-primary);
-  line-height: 1;
+  line-height: 1.1;
 }
 
 .stat-unit {
@@ -1316,23 +1545,125 @@ const isBeforeRetention = computed(() => {
 
 .stat-label {
   font-family: 'DM Sans', sans-serif;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-muted);
-  margin-top: 6px;
+  margin-top: 3px;
 }
 
-/* 热力图 - 治愈简约日历风格 */
+/* 热力图 - 底部整条（卡片壳在 .heatmap-block 上） */
 .heatmap-container {
   width: 100%;
   background: var(--bg-card);
-  border-radius: 16px;
-  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 8px 16px 10px;
   box-shadow: 0 2px 12px var(--shadow);
   position: relative;
 }
 
+/* ===== [改版] 底部单行热力条 ===== */
+.heat-strip {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.strip-title {
+  flex-shrink: 0;
+}
+
+.strip-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.strip-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.strip-cells {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 3px;
+  align-items: stretch;
+}
+
+.strip-cell {
+  flex: 1;
+  min-width: 0;
+  /* [改版] 去掉 22px 限宽：格子均分整行，宽窗口下热力条铺满中段 */
+  height: 28px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  transition: transform 0.12s ease;
+}
+
+.strip-cell:hover {
+  transform: scale(1.15);
+}
+
+.strip-today-mark {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--tomato);
+}
+
+.strip-cell.today {
+  box-shadow: inset 0 0 0 1.5px var(--tomato);
+}
+
+.strip-summary {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sum-text {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.sum-text b {
+  color: var(--text-primary);
+  font-size: 13.5px;
+}
+
+.fullcal-btn {
+  display: flex;
+  align-items: center;
+  padding: 6px 11px;
+  background: var(--bg-secondary);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.fullcal-btn:hover {
+  background: rgba(231, 76, 60, 0.12);
+  color: var(--tomato);
+}
+
+/* 完整日历弹窗 body */
+.fullcal-body {
+  padding: 2px 4px 4px;
+}
+
 .heatmap-header {
-  margin-bottom: 12px;
+  margin-bottom: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1341,7 +1672,7 @@ const isBeforeRetention = computed(() => {
 
 .heatmap-title {
   font-family: 'DM Sans', sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
   min-width: 80px;
@@ -1497,29 +1828,29 @@ const isBeforeRetention = computed(() => {
 }
 
 .weekday {
-  width: 32px;
+  width: 26px;
   text-align: center;
   font-family: 'DM Sans', sans-serif;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-muted);
 }
 
 .calendar-grid {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   align-items: center;
 }
 
 .calendar-row {
   display: flex;
-  gap: 4px;
+  gap: 3px;
 }
 
 .calendar-cell {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+  width: 26px;
+  height: 24px;
+  border-radius: 5px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1536,12 +1867,15 @@ const isBeforeRetention = computed(() => {
   background: transparent !important;
 }
 
-.calendar-cell.completed {
-  background: var(--completed-bg, #f0f9f4);
-}
+/* [改版] 热力等级（单行条 + 月历共用）：0 无 / 1 / 2-3 / 4-5 / 6+ */
+.heat-l0 { background: var(--heatmap-empty); }
+.heat-l1 { background: var(--heatmap-1); }
+.heat-l2 { background: var(--heatmap-2); }
+.heat-l3 { background: var(--heatmap-3); }
+.heat-l4 { background: var(--heatmap-4); }
 
 .calendar-cell.today {
-  background: rgba(231, 76, 60, 0.15);
+  box-shadow: inset 0 0 0 1.5px var(--tomato);
 }
 
 .calendar-cell.today .day-num {
