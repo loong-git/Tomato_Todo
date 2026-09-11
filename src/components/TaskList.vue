@@ -198,7 +198,10 @@ function deleteArchivedTask(taskId: string) {
     <div class="card-head">
       <h3>今日任务</h3>
       <div class="fold-right">
-        <span class="fold-count">{{ statsStore.todayCount }} / {{ settingsStore.settings.dailyGoal }} 个番茄</span>
+        <span class="goal-badge">
+          <svg class="ticon" style="width:11px;height:11px;vertical-align:-2px" viewBox="0 0 64 64"><ellipse cx="32" cy="38" rx="26" ry="24" fill="url(#tomatoIconGrad)"/><ellipse cx="23" cy="31" rx="9" ry="7" fill="rgba(255,255,255,.35)"/><path d="M32 18 C29 11 22 11 20 15 C18 19 23 22 27 21 C29 19 30 19 32 18" fill="#4a7c59"/><path d="M32 18 C35 11 42 11 44 15 C46 19 41 22 37 21 C35 19 34 19 32 18" fill="#5a8c69"/><path d="M32 18 C31 9 36 6 38 9 C40 12 36 17 32 18" fill="#3d6b4a"/><path d="M32 18 C33 9 28 6 26 9 C24 12 28 17 32 18" fill="#4a7c59"/><rect x="30" y="15" width="4" height="5" rx="1.5" fill="#4a7c59"/></svg>
+          {{ statsStore.todayCount }}/{{ settingsStore.settings.dailyGoal }}
+        </span>
       </div>
     </div>
     <div class="add-task">
@@ -713,6 +716,10 @@ function deleteArchivedTask(taskId: string) {
 }
 
 .card-head {
+  /* [修复] 标题左 + 徽章右一行排布，徽章不再掉到标题下方挤输入框 */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 8px;
 }
 
@@ -728,9 +735,15 @@ function deleteArchivedTask(taskId: string) {
   gap: 8px;
 }
 
-.fold-count {
-  font-size: 12px;
-  color: var(--text-muted);
+/* [优化] 计数徽章化：比纯文字更聚焦 */
+.goal-badge {
+  font-size: 11px;
+  color: var(--tomato-light);
+  background: rgba(231, 76, 60, 0.12);
+  border: 1px solid rgba(231, 76, 60, 0.25);
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-weight: 600;
 }
 
 /* [改版] 番茄 icon（内联 SVG，icon.svg 同源形象）：15px、基线对齐、贴紧数量 */

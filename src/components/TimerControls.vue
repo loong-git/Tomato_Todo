@@ -110,14 +110,18 @@ function toggleTimer() {
   transform: scale(0.96);
 }
 
-/* 运行中：橙色（暂停状态） */
+/* [改版] 运行中：红描边（不再抢主色数字的戏，hover 微填充） */
 .control-btn.primary.running {
-  background: #f39c12;
-  box-shadow: 0 4px 14px rgba(243, 156, 18, 0.35);
+  background: transparent;
+  color: var(--tomato);
+  border: 1.5px solid var(--tomato);
+  box-shadow: none;
+  padding: 0 20px;
 }
 
 .control-btn.primary.running:hover {
-  background: #e67e22;
+  background: rgba(231, 76, 60, 0.08);
+  box-shadow: none;
 }
 
 /* 次按钮：ghost 方块 */

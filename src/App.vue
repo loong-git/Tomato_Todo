@@ -248,6 +248,12 @@ const currentTaskName = computed(() => {
   return taskStore.tasks.find(t => t.id === ids[0])?.name || ''
 })
 
+// [优化] 今日目标进度（计时卡中部）：todayCount / dailyGoal，封顶 100%
+const goalPct = computed(() => {
+  const goal = settingsStore.settings.dailyGoal || 1
+  return Math.min(100, Math.round((statsStore.todayCount / goal) * 100))
+})
+
 // 窗口控制
 function minimizeWindow() {
   if (window.electronAPI) {
@@ -421,8 +427,13 @@ async function openFocusMode(mode: 'compact') {
             <TimerDisplay />
             <div class="timer-meta">
               <ModeSelector />
-              <div v-if="timerStore.isRunning && currentTaskName" class="current-task-line">
-                正在专注 · <b>{{ currentTaskName }}</b>
+              <div class="goal-slot">
+                <div class="goal-line">
+                  <b>{{ statsStore.todayCount }}</b>/{{ settingsStore.settings.dailyGoal }} 个番茄
+                  <span v-if="timerStore.isRunning && currentTaskName" class="goal-task">正在专注 · {{ currentTaskName }}</span>
+                  <span class="goal-pct">{{ goalPct }}%</span>
+                </div>
+                <div class="goal-bar"><i :style="{ width: goalPct + '%' }"></i></div>
               </div>
             </div>
             <div class="timer-ctl">
@@ -519,26 +530,61 @@ main {
 .timer-meta {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 14px;
   min-width: 0;
-  /* ModeSelector 移除/存在时高度稳定，"正在专注"行出现不跳动 */
+  /* [需求] 模式 tab 靠左（贴着倒计时数字），进度条占中部剩余空间 */
   min-height: 19px;
 }
 
-.current-task-line {
-  font-size: 12.5px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
+/* [优化] 今日目标进度（接 statsStore.todayCount / dailyGoal） */
+.goal-slot {
+  flex: 1;
+  min-width: 0;
+  padding: 0 6px;
 }
 
-.current-task-line b {
+.goal-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  white-space: nowrap;
+}
+
+.goal-line b {
   color: var(--text-primary);
-  font-weight: 600;
+  font-size: 13px;
+}
+
+.goal-task {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.goal-pct {
+  margin-left: auto;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.goal-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+
+.goal-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--tomato-light), var(--tomato));
+  transition: width 0.3s ease;
 }
 
 .timer-ctl {
