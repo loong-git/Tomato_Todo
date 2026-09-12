@@ -91,9 +91,10 @@ function toggleTimer() {
 
 /* 主按钮：胶囊（开始/暂停） */
 .control-btn.primary {
-  height: 40px;
+  /* [需求] 瘦身：40 → 32px，与缩小后的倒计时字号对齐 */
+  height: 32px;
   padding: 0 22px;
-  border-radius: 20px;
+  border-radius: 16px;
   background: var(--tomato);
   color: #fff;
   font-size: 13.5px;
@@ -126,8 +127,9 @@ function toggleTimer() {
 
 /* 次按钮：ghost 方块 */
 .control-btn.ghost {
-  width: 40px;
-  height: 40px;
+  /* [需求] 瘦身：40 → 32px */
+  width: 32px;
+  height: 32px;
   border-radius: 10px;
   background: var(--bg-secondary);
   color: var(--text-muted);

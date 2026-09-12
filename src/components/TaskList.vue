@@ -212,6 +212,15 @@ function deleteArchivedTask(taskId: string) {
     </div>
 
     <div class="task-groups">
+      <!-- [需求] 空态：列表区高度固定 270px，没任务时不留一大片空白 -->
+      <div v-if="activeTaskGroups.length === 0" class="task-empty">
+        <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M12 7v5l3 2"/>
+        </svg>
+        <span>今天还没有任务</span>
+        <small>在上面输入框添加一个，开始今天的专注</small>
+      </div>
       <div v-for="group in activeTaskGroups" :key="group.dateKey" class="task-group">
         <div class="date-header">{{ group.dateKey }}</div>
         <div
@@ -717,7 +726,8 @@ function deleteArchivedTask(taskId: string) {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: 14px;
-  padding: 14px 16px;
+  /* [需求] 瘦身：14/16 → 10/14 */
+  padding: 10px 14px;
   box-shadow: 0 2px 12px var(--shadow);
 }
 
@@ -726,7 +736,8 @@ function deleteArchivedTask(taskId: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  /* [需求] 瘦身：8 → 5 */
+  margin-bottom: 5px;
 }
 
 .card-head h3 {
@@ -765,12 +776,14 @@ function deleteArchivedTask(taskId: string) {
 .add-task {
   display: flex;
   gap: 8px;
-  margin-bottom: 12px;
+  /* [需求] 瘦身：12 → 7 */
+  margin-bottom: 7px;
 }
 
 .task-input {
   flex: 1;
-  padding: 9px 14px;
+  /* [需求] 瘦身：9/14 → 6/11 */
+  padding: 6px 11px;
   border: 1px solid var(--border-color);
   border-radius: 10px;
   background: var(--bg-primary);
@@ -1345,6 +1358,24 @@ function deleteArchivedTask(taskId: string) {
   min-width: 0;
 }
 
+/* [需求] 今日任务空态：占满固定高度的列表区，居中提示 */
+.task-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  opacity: 0.75;
+}
+
+.task-empty small {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
 /* 历史任务按钮（列表不再撑满，靠 margin-top:auto 始终贴底） */
 .history-btn {
   display: flex;
@@ -1352,7 +1383,8 @@ function deleteArchivedTask(taskId: string) {
   justify-content: center;
   gap: 6px;
   width: 100%;
-  padding: 12px;
+  /* [需求] 瘦身：12 → 6 */
+  padding: 6px;
   /* auto 让它贴底：列表区改为固定高度后，卡片里的剩余空间不再由它吃下 */
   margin-top: auto;
   border: 1px dashed var(--border-color);

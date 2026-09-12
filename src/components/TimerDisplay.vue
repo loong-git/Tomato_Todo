@@ -72,7 +72,8 @@ const progressColor = computed(() => {
 }
 
 .big-time {
-  font-size: 48px;
+  /* [需求] 瘦身：48 → 34px，让计时卡在默认窗口下矮 14px */
+  font-size: 34px;
   font-weight: 650;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;

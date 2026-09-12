@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>完整页面 Demo · 底部热力条显示完整方案</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'DM Sans', -apple-system, 'Segoe UI', sans-serif;
+    background: #0d0b0a; color: #f5f0e8;
+    padding: 20px 0 40px;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+  }
+  :root {
+    --tomato: #e74c3c; --tomato-light: #ff6b5b; --tomato-dark: #c0392b;
+    --bg-primary: #1a1614; --bg-secondary: #2d2522;
+    --bg-card: rgba(45, 37, 34, 0.85);
+    --text-primary: #faf5f0; --text-secondary: #c4bdb5; --text-muted: #8a827a;
+    --border-color: rgba(168, 159, 151, 0.18);
+    --shadow: rgba(0, 0, 0, 0.4);
+  }
+
+  /* ===== 切换条 ===== */
+  .switcher {
+    display: flex; align-items: center; gap: 10px;
+    background: #221c19; border: 1px solid var(--border-color);
+    border-radius: 12px; padding: 8px 12px;
+  }
+  .switcher .lbl { font-size: 12px; color: var(--text-muted); margin-right: 4px; }
+  .sw-btn {
+    padding: 7px 15px; border-radius: 8px; border: 1px solid var(--border-color);
+    background: transparent; color: var(--text-secondary);
+    font-size: 12.5px; font-family: inherit; cursor: pointer; font-weight: 500;
+    transition: all .18s ease;
+  }
+  .sw-btn:hover { color: var(--text-primary); border-color: rgba(231,76,60,.5); }
+  .sw-btn.on {
+    background: linear-gradient(135deg, var(--tomato-light), var(--tomato));
+    color: #fff; border-color: transparent; font-weight: 600;
+    box-shadow: 0 2px 10px rgba(231,76,60,.35);
+  }
+
+  /* ===== 应用窗口 ===== */
+  .app {
+    width: 867px; height: 592px;
+    background: var(--bg-primary);
+    border-radius: 16px; overflow: hidden;
+    display: flex; flex-direction: column;
+    box-shadow: 0 24px 70px rgba(0,0,0,.65);
+    border: 1px solid rgba(255,255,255,.06);
+  }
+
+  .title-bar {
+    height: 48px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 10px 0 16px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-color);
+  }
+  .logo { display: flex; align-items: center; gap: 9px; }
+  .tomato-icon { width: 26px; height: 26px; color: var(--tomato); }
+  .title { font-size: 15px; font-weight: 600; }
+  .title-blank { flex: 1; }
+  .wbtn {
+    width: 30px; height: 28px; border: none; border-radius: 6px;
+    background: transparent; color: var(--text-secondary); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .wbtn:hover { background: rgba(255,255,255,.1); }
+  .wdivider { width: 1px; height: 16px; background: var(--border-color); margin: 0 4px; }
+
+  /* ===== 主体：main 可滚动，content 撑高 ===== */
+  .main { flex: 1; min-height: 0; overflow-y: auto; }
+  .main::-webkit-scrollbar { width: 8px; }
+  .main::-webkit-scrollbar-thumb { background: rgba(231,76,60,.45); border-radius: 4px; }
+  .main::-webkit-scrollbar-track { background: rgba(255,255,255,.04); }
+
+  .content {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+    grid-template-rows: auto minmax(0,1fr) auto;
+    grid-template-areas: "timer timer" "tasks stats" "heat heat";
+    gap: 10px; padding: 12px 14px;
+    min-height: 100%;
+  }
+  /* 方案 A：热力条 sticky 吸附在可视区底部，滚动时始终可见 */
+  .app.sticky-heat .heat-strip { position: sticky; bottom: 0; z-index: 6; }
+
+  /* 方案 B：整体瘦身 —— 各段各收几像素，凑出 59px 的缺口，内容一个不少、也不出现滚动 */
+  .app.slim .content { gap: 7px; padding: 4px 12px; }
+  .app.slim .timer-card { padding: 7px 16px 9px; }
+  .app.slim .td-num { font-size: 30px; }
+  .app.slim .cbtn-primary { height: 30px; padding: 0 18px; }
+  .app.slim .cbtn-ghost { width: 30px; height: 30px; }
+  .app.slim .task-list-card { padding: 10px 14px; }
+  .app.slim .card-head { margin-bottom: 5px; }
+  .app.slim .add-row { margin-bottom: 7px; }
+  .app.slim .add-input { padding: 6px 11px; }
+  .app.slim .date-header { margin-bottom: 4px; }
+  .app.slim .hist-btn { padding: 5px; font-size: 12px; }
+  .app.slim .heat-strip { padding: 5px 12px; }
+  .app.slim .cell-h { height: 15px; }
+  .app.slim .stats-card { gap: 6px; padding: 9px 12px; }
+  .app.slim .goal-box { padding: 7px 11px; }
+  .app.slim .cell { padding: 7px 10px; }
+  .app.slim .three .cell { padding: 5px 9px; }
+  .app.slim .week { padding: 2px 0; }
+
+  /* 计时卡 */
+  .timer-area { grid-area: timer; }
+  .timer-card {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--bg-card); border: 1px solid var(--border-color);
+    border-radius: 14px; padding: 12px 18px 14px;
+    box-shadow: 0 2px 12px var(--shadow);
+  }
+  .td-num {
+    font-size: 44px; font-weight: 800; color: var(--tomato);
+    font-variant-numeric: tabular-nums; line-height: 1;
+    position: relative; padding-left: 16px; flex-shrink: 0;
+  }
+  .td-num::before {
+    content: ''; position: absolute; left: 0; top: 14%; bottom: 14%;
+    width: 4px; border-radius: 2px; background: currentColor;
+  }
+  .timer-meta { flex: 1; display: flex; align-items: center; gap: 14px; min-width: 0; }
+  .mode-tabs {
+    display: flex; background: var(--bg-secondary); border-radius: 10px;
+    padding: 3px; gap: 2px; border: 1px solid var(--border-color); flex-shrink: 0;
+  }
+  .mode-tab {
+    padding: 3px 10px; border: none; background: transparent;
+    color: var(--text-secondary); font-size: 11px; font-weight: 500;
+    border-radius: 8px; cursor: pointer; font-family: inherit; white-space: nowrap;
+  }
+  .mode-tab.active { background: var(--tomato); color: #fff; }
+  .goal-slot { flex: 1; min-width: 0; padding: 0 6px; }
+  .goal-line { display: flex; align-items: baseline; gap: 5px; font-size: 12.5px; color: var(--text-muted); margin-bottom: 6px; }
+  .goal-line b { color: var(--text-primary); font-size: 13px; }
+  .goal-pct { margin-left: auto; font-size: 11px; }
+  .goal-bar { height: 4px; border-radius: 2px; background: var(--border-color); overflow: hidden; }
+  .goal-bar i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--tomato-light), var(--tomato)); width: 12%; }
+  .timer-ctl { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .cbtn-ghost { width: 38px; height: 38px; border-radius: 10px; border: none; background: var(--bg-secondary); color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .cbtn-primary {
+    height: 40px; padding: 0 24px; border-radius: 20px; border: none;
+    background: linear-gradient(135deg, var(--tomato-light), var(--tomato));
+    color: #fff; font-size: 13.5px; font-weight: 700; cursor: pointer; font-family: inherit;
+    display: flex; align-items: center; gap: 7px;
+    box-shadow: 0 4px 14px rgba(231,76,60,.35);
+  }
+
+  /* 任务卡 */
+  .task-list-card {
+    grid-area: tasks; min-height: 0;
+    display: flex; flex-direction: column;
+    background: var(--bg-card); border: 1px solid var(--border-color);
+    border-radius: 14px; padding: 14px 16px;
+    box-shadow: 0 2px 12px var(--shadow);
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .card-head h3 { font-size: 14px; font-weight: 600; }
+  .goal-badge {
+    font-size: 11px; color: var(--tomato-light);
+    background: rgba(231,76,60,.12); border: 1px solid rgba(231,76,60,.25);
+    padding: 2px 9px; border-radius: 999px; font-weight: 600;
+    display: flex; align-items: center; gap: 3px;
+  }
+  .dot-t { width: 9px; height: 9px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ff6b5b, #e74c3c); }
+  .add-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .add-input {
+    flex: 1; background: rgba(0,0,0,.25); border: 1px solid var(--border-color);
+    border-radius: 9px; padding: 8px 11px; color: var(--text-primary);
+    font-size: 12.5px; outline: none; font-family: inherit;
+  }
+  .add-btn {
+    width: 34px; border: none; border-radius: 9px; background: var(--tomato);
+    color: #fff; cursor: pointer; font-size: 17px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .date-header { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .date-header::after { content: ''; flex: 1; height: 1px; background: var(--border-color); }
+
+  /* 固定高度 = 标题 + 3 张卡（同线上 TaskList.vue） */
+  .task-list {
+    height: 270px; flex: 0 1 auto; min-height: 0;
+    overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+    padding-right: 6px; margin-bottom: 8px;
+  }
+  .task-list::-webkit-scrollbar { width: 5px; }
+  .task-list::-webkit-scrollbar-thumb { background: rgba(231,76,60,.35); border-radius: 3px; }
+  .task-list::-webkit-scrollbar-track { background: transparent; }
+
+  .tcard2 {
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 9px 12px; border-radius: 10px;
+    border: 1px solid var(--border-color); background: rgba(0,0,0,.18);
+    flex-shrink: 0;
+  }
+  .l1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .l2 { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-muted); }
+  .task-name-wrapper { flex: 1; min-width: 0; }
+  .nm2 { font-size: 13.5px; color: var(--text-primary); font-weight: 500; }
+  .meta-top { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+  .meta { font-size: 11px; color: var(--text-muted); white-space: nowrap; display: flex; align-items: center; gap: 3px; }
+  .ticon { width: 13px; height: 13px; flex-shrink: 0; }
+  .acts2 { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .db { width: 20px; height: 20px; border: none; border-radius: 50%; background: var(--bg-secondary); color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .dx { width: 20px; height: 20px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: 50%; }
+
+  .hist-btn {
+    margin-top: auto; flex-shrink: 0;
+    padding: 12px; border-radius: 12px; border: 1px dashed var(--border-color);
+    background: transparent; color: var(--text-muted); font-size: 13px;
+    cursor: pointer; font-family: inherit;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .hist-btn:hover { color: var(--tomato-light); border-color: rgba(231,76,60,.4); }
+
+  /* 统计卡 */
+  .stats-card {
+    grid-area: stats; min-height: 0;
+    background: var(--bg-card); border: 1px solid var(--border-color);
+    border-radius: 14px; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 9px;
+    box-shadow: 0 2px 12px var(--shadow);
+  }
+  .stats-head { display: flex; align-items: center; gap: 8px; }
+  .stats-head h3 { font-size: 14px; font-weight: 600; flex: 1; }
+  .mini-btn { font-size: 11px; color: var(--text-muted); background: transparent; border: 1px solid var(--border-color); border-radius: 7px; padding: 3px 9px; cursor: pointer; font-family: inherit; }
+  .goal-box { background: rgba(0,0,0,.2); border-radius: 10px; padding: 10px 12px; }
+  .goal-box .row { display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--text-muted); }
+  .goal-box .row b { font-size: 19px; color: var(--tomato); }
+  .goal-box .pct { margin-left: auto; font-size: 11px; color: var(--tomato-light); background: rgba(231,76,60,.12); padding: 2px 8px; border-radius: 999px; }
+  .week-head { display: flex; align-items: baseline; justify-content: space-between; font-size: 11.5px; color: var(--text-muted); }
+  .week-head .wh-sum b { color: var(--text-primary); font-weight: 600; }
+  .week { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; padding: 4px 0; }
+  .wd { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); flex: 1; }
+  /* 无专注的日子不画柱子（也不留灰槽），只有真正的柱子从底部长出来 */
+  .wd .bar { width: 22px; border-radius: 4px; background: transparent; height: 44px; display: flex; align-items: flex-end; }
+  .wd .bar i { display: block; width: 100%; border-radius: 4px; background: var(--tomato); }
+  .wd .bar.on i { height: 100%; }
+  .wd.today { color: var(--tomato-light); }
+  .wd.today i { color: var(--tomato); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+  .sec-label { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .cell { background: rgba(0,0,0,.2); border-radius: 10px; padding: 9px 11px; }
+  .cell b { font-size: 17px; display: block; margin-bottom: 2px; }
+  .cell span { font-size: 11px; color: var(--text-muted); }
+  .three .cell { padding: 8px 10px; }
+  .three .cell b { font-size: 15px; }
+  .three .cell span { font-size: 10.5px; }
+
+
+  /* 热力条 */
+  .heat-strip {
+    grid-area: heat;
+    background: var(--bg-card); border: 1px solid var(--border-color);
+    border-radius: 14px; padding: 10px 14px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 2px 12px var(--shadow);
+  }
+  .heat-strip .lbl { font-size: 12px; font-weight: 600; flex-shrink: 0; }
+  .heat-strip .lbl small { display: block; font-size: 10px; color: var(--text-muted); font-weight: 400; }
+  .cells { display: flex; gap: 3px; flex: 1; }
+  .cell-h { width: 16px; height: 20px; border-radius: 4px; background: rgba(255,255,255,.05); }
+  .cell-h.h1 { background: rgba(231,76,60,.3); }
+  .cell-h.h2 { background: rgba(231,76,60,.55); }
+  .cell-h.h3 { background: var(--tomato); }
+  .cell-h.h4 { background: var(--tomato-dark); }
+  .heat-strip .sum { font-size: 11.5px; color: var(--text-muted); flex-shrink: 0; }
+  .heat-strip .sum b { color: var(--text-primary); }
+
+  /* ===== 测量面板 ===== */
+  .meter {
+    width: 867px; display: flex; align-items: center; gap: 18px;
+    background: #221c19; border: 1px solid var(--border-color);
+    border-radius: 12px; padding: 12px 18px; font-size: 12.5px;
+  }
+  .meter .k { color: var(--text-muted); }
+  .meter .v { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .meter .v.bad { color: #ff7a6b; }
+  .meter .v.good { color: #6fbf83; }
+  .verdict {
+    margin-left: auto; padding: 5px 14px; border-radius: 999px; font-weight: 600; font-size: 12px;
+  }
+  .verdict.bad { background: rgba(231,76,60,.16); color: #ff8a7a; border: 1px solid rgba(231,76,60,.35); }
+  .verdict.good { background: rgba(39,174,96,.15); color: #6fbf83; border: 1px solid rgba(39,174,96,.3); }
+</style>
+</head>
+<body>
+
+<div class="switcher">
+  <span class="lbl">方案：</span>
+  <button class="sw-btn on" data-mode="current">现状（不动）</button>
+  <button class="sw-btn" data-mode="a">A · 热力条吸附底部</button>
+  <button class="sw-btn" data-mode="b">B · 整体瘦身</button>
+</div>
+
+<div class="app" id="app">
+  <div class="title-bar">
+    <div class="logo">
+      <svg class="tomato-icon" viewBox="0 0 32 32">
+        <ellipse cx="16" cy="18" rx="12" ry="11" fill="currentColor" opacity="0.9"/>
+        <path d="M16 7 C14 4 12 4 11 5 C10 6 10 8 12 9 L16 7 L20 9 C22 8 22 6 21 5 C20 4 18 4 16 7Z" fill="#4a7c59"/>
+      </svg>
+      <span class="title">番茄TODO</span>
+    </div>
+    <div class="title-blank"></div>
+    <button class="wbtn" title="浅色"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg></button>
+    <button class="wbtn" title="小窗"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><rect x="12" y="12" width="6" height="4.5" rx="1" fill="currentColor" stroke="none"/></svg></button>
+    <button class="wbtn" title="沉浸"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg></button>
+    <button class="wbtn" title="设置"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+    <div class="wdivider"></div>
+    <button class="wbtn"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+    <button class="wbtn"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg></button>
+    <button class="wbtn"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+
+  <div class="main" id="main">
+    <div class="content" id="content">
+      <section class="timer-area">
+        <div class="timer-card">
+          <div class="td-num">25:00</div>
+          <div class="timer-meta">
+            <div class="mode-tabs">
+              <button class="mode-tab active">专注</button>
+              <button class="mode-tab">短休息</button>
+              <button class="mode-tab">长休息</button>
+            </div>
+            <div class="goal-slot">
+              <div class="goal-line"><b>0</b>/8 个番茄<span class="goal-pct">0%</span></div>
+              <div class="goal-bar"><i></i></div>
+            </div>
+          </div>
+          <div class="timer-ctl">
+            <button class="cbtn-ghost"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button>
+            <button class="cbtn-primary"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>开始</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="task-list-card">
+        <div class="card-head">
+          <h3>今日任务</h3>
+          <span class="goal-badge"><span class="dot-t"></span>0/8</span>
+        </div>
+        <div class="add-row">
+          <input class="add-input" placeholder="添加新任务...（N）">
+          <button class="add-btn">+</button>
+        </div>
+        <div class="date-header">今天</div>
+        <div class="task-list">
+          <div class="tcard2">
+            <div class="l1"><div class="task-name-wrapper"><span class="nm2">特色</span></div><span class="meta-top">创建于 10:11</span></div>
+            <div class="l2"><span class="meta"><svg class="ticon" viewBox="0 0 64 64"><ellipse cx="32" cy="38" rx="26" ry="24" fill="#e74c3c"/><rect x="30" y="15" width="4" height="5" rx="1.5" fill="#4a7c59"/></svg>×0</span>
+              <div class="acts2"><button class="db"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg></button><button class="dx">×</button></div>
+            </div>
+          </div>
+          <div class="tcard2">
+            <div class="l1"><div class="task-name-wrapper"><span class="nm2">特色</span></div><span class="meta-top">创建于 10:11</span></div>
+            <div class="l2"><span class="meta"><svg class="ticon" viewBox="0 0 64 64"><ellipse cx="32" cy="38" rx="26" ry="24" fill="#e74c3c"/><rect x="30" y="15" width="4" height="5" rx="1.5" fill="#4a7c59"/></svg>×0</span>
+              <div class="acts2"><button class="db"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg></button><button class="dx">×</button></div>
+            </div>
+          </div>
+          <div class="tcard2">
+            <div class="l1"><div class="task-name-wrapper"><span class="nm2">特色</span></div><span class="meta-top">创建于 09:49</span></div>
+            <div class="l2"><span class="meta"><svg class="ticon" viewBox="0 0 64 64"><ellipse cx="32" cy="38" rx="26" ry="24" fill="#e74c3c"/><rect x="30" y="15" width="4" height="5" rx="1.5" fill="#4a7c59"/></svg>×0</span>
+              <div class="acts2"><button class="db"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg></button><button class="dx">×</button></div>
+            </div>
+          </div>
+          <div class="tcard2">
+            <div class="l1"><div class="task-name-wrapper"><span class="nm2">写周报</span></div><span class="meta-top">创建于 09:20</span></div>
+            <div class="l2"><span class="meta"><svg class="ticon" viewBox="0 0 64 64"><ellipse cx="32" cy="38" rx="26" ry="24" fill="#e74c3c"/><rect x="30" y="15" width="4" height="5" rx="1.5" fill="#4a7c59"/></svg>×0</span>
+              <div class="acts2"><button class="db"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg></button><button class="dx">×</button></div>
+            </div>
+          </div>
+        </div>
+        <button class="hist-btn">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          历史任务 (5)
+        </button>
+      </div>
+
+      <div class="stats-card" id="stats"></div>
+
+      <div class="heat-strip">
+        <div class="lbl">专注热力<small>9月 · 每格一天</small></div>
+        <div class="cells">
+          <div class="cell-h h3"></div><div class="cell-h h4"></div><div class="cell-h h3"></div>
+          <div class="cell-h h2"></div><div class="cell-h h1"></div><div class="cell-h"></div>
+          <div class="cell-h h2"></div><div class="cell-h h3"></div><div class="cell-h"></div>
+          <div class="cell-h h1"></div><div class="cell-h h2"></div><div class="cell-h h4"></div>
+          <div class="cell-h"></div><div class="cell-h h1"></div><div class="cell-h h2"></div>
+          <div class="cell-h h1"></div><div class="cell-h"></div><div class="cell-h h1"></div>
+          <div class="cell-h h2"></div><div class="cell-h h1"></div><div class="cell-h"></div>
+          <div class="cell-h h3"></div><div class="cell-h h1"></div><div class="cell-h h2"></div>
+        </div>
+        <div class="sum">本月 <b>30</b> 个番茄 · <b>12.5</b> 小时　　完整日历 ›</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="meter">
+  <span><span class="k">可视区</span> <span class="v" id="m-view">-</span></span>
+  <span><span class="k">内容总高</span> <span class="v" id="m-content">-</span></span>
+  <span><span class="k">溢出</span> <span class="v" id="m-over">-</span></span>
+  <span><span class="k">热力条</span> <span class="v" id="m-heat">-</span></span>
+  <span class="verdict bad" id="m-verdict">-</span>
+</div>
+
+<script>
+const TOMATO_SVG = '<svg class="ticon" viewBox="0 0 64 64"><ellipse cx="32" cy="38" rx="26" ry="24" fill="#e74c3c"/><rect x="30" y="15" width="4" height="5" rx="1.5" fill="#4a7c59"/></svg>';
+
+// 完整版统计卡（= 线上现状）
+const STATS_FULL = `
+  <div class="stats-head">
+    <h3>数据</h3>
+    <button class="mini-btn">↓ 数据</button>
+    <button class="mini-btn">≡ 详细数据</button>
+  </div>
+  <div class="goal-box">
+    <div class="row">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="var(--tomato)" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+      今日目标<b>0.0</b>/4 小时<span class="pct">0%</span>
+    </div>
+  </div>
+  <div class="week-head">
+    <span>本周番茄</span>
+    <span class="wh-sum">共 <b>1</b> 个 · 比上周 <b>-97%</b></span>
+  </div>
+  <div class="week">
+    ${['一','二','三','四','五','六','日'].map((d, i) => `
+      <div class="wd ${i === 5 ? 'today' : ''}">
+        <span>${i === 5 ? '1' : '0'}</span>
+        <div class="bar ${i === 5 ? 'on' : ''}">${i === 5 ? '<i></i>' : ''}</div>
+        <span>${d}</span>
+      </div>`).join('')}
+  </div>
+  <div class="two">
+    <div class="cell"><b>0</b><span>分钟</span></div>
+    <div class="cell"><b>0 / 8</b><span>完成番茄</span></div>
+    <div class="cell"><b>0天</b><span>连续记录</span></div>
+    <div class="cell"><b>0.00</b><span>昨日小时</span></div>
+  </div>
+  <div class="sec-label">累计专注</div>
+  <div class="three">
+    <div class="cell"><b>328</b><span>累计番茄</span></div>
+    <div class="cell"><b>135.0</b><span>累计小时</span></div>
+    <div class="cell"><b>24.7</b><span>平均每个(分)</span></div>
+  </div>`;
+
+// 方案 A 的紧凑效果全部由 CSS 承担（.stats-card.compact 覆盖内边距/柱高/四宫格列数），
+// HTML 结构与完整版一致，故无需第二份模板
+
+const MODES = {
+  current: { cls: '',            title: '现状：热力条被顶出可视区' },
+  a:       { cls: 'sticky-heat', title: '方案 A：热力条吸附底部 → 滚动时始终可见' },
+  b:       { cls: 'slim',        title: '方案 B：整体瘦身 → 不滚动也全部完整' },
+};
+
+const statsEl = document.getElementById('stats');
+const appEl = document.getElementById('app');
+const mainEl = document.getElementById('main');
+const contentEl = document.getElementById('content');
+
+function render(mode) {
+  const cfg = MODES[mode];
+  statsEl.className = 'stats-card';
+  statsEl.innerHTML = STATS_FULL;
+  appEl.className = 'app' + (cfg.cls ? ' ' + cfg.cls : '');
+  mainEl.scrollTop = 0;
+
+  // 下一帧测量（等布局稳定）
+  requestAnimationFrame(() => {
+    const view = mainEl.clientHeight;
+    const contentH = contentEl.scrollHeight;
+    const over = contentH - view;
+    const heat = document.querySelector('.heat-strip').getBoundingClientRect();
+    const mainBox = mainEl.getBoundingClientRect();
+    const heatVisible = heat.bottom <= mainBox.bottom + 1;
+
+    document.getElementById('m-view').textContent = view + 'px';
+    const overEl = document.getElementById('m-content');
+    overEl.textContent = contentH + 'px';
+    const overNum = document.getElementById('m-over');
+    overNum.textContent = over > 0 ? '+' + over + 'px' : '0px';
+    overNum.className = 'v ' + (over > 0 ? 'bad' : 'good');
+    document.getElementById('m-heat').textContent = heatVisible ? '完整可见' : '被切掉 ' + Math.round(heat.bottom - mainBox.bottom) + 'px';
+    document.getElementById('m-heat').className = 'v ' + (heatVisible ? 'good' : 'bad');
+
+    const v = document.getElementById('m-verdict');
+    v.textContent = cfg.title + (heatVisible ? '（✓ 热力条完整）' : '（✗ 热力条不可见）');
+    v.className = 'verdict ' + (heatVisible ? 'good' : 'bad');
+  });
+}
+
+document.querySelectorAll('.sw-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.sw-btn').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    render(btn.dataset.mode);
+  });
+});
+
+render('current');
+window.addEventListener('resize', () => {
+  const on = document.querySelector('.sw-btn.on');
+  render(on ? on.dataset.mode : 'current');
+});
+</script>
+</body>
+</html>

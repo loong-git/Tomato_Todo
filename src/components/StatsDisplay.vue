@@ -280,6 +280,15 @@ const totalFocusHours = computed(() => {
   return formatHours(totalFocusSeconds.value)
 })
 
+// [需求] 平均每个番茄的时长（分钟）—— 累计专注模块用
+const avgPomodoroMinutes = computed(() => {
+  if (totalFocusCount.value <= 0) return 0
+  return Math.round(totalFocusSeconds.value / totalFocusCount.value / 60)
+})
+
+// [需求] 累计小时取整：小卡里 135.00h 太长，整数够读
+const lifetimeHours = computed(() => Math.round(totalFocusSeconds.value / 3600))
+
 // 本年完成番茄 - 从按年统计读取
 const yearFocusCount = computed(() => {
   const year = new Date().getFullYear()
@@ -554,9 +563,9 @@ const weekTrend = computed(() => {
   return pct >= 0 ? `比上周 +${pct}%` : `比上周 ${pct}%`
 })
 
-// 柱高（px）：最高的一天 52px，0 个 4px 灰块
+// 柱高（px）：最高的一天 38px；[需求] 0 个不再画 4px 灰块——没专注的日子就是空的
 function barPx(count: number): number {
-  if (count <= 0) return 4
+  if (count <= 0) return 0
   return Math.max(5, Math.round((count / weekBars.value.max) * 38))
 }
 
@@ -670,6 +679,24 @@ function barPx(count: number): number {
       <div class="stat-value">{{ yesterdayHours }}</div>
       <div class="stat-label">昨日小时</div>
     </div>
+    </div>
+
+    <!-- [需求] 瘦身省下的纵向空间用「累计专注」补上（数据全部来自已有的 lifetimeStats），
+         不放这块统计卡底部会留 ~120px 空白 -->
+    <div class="lifetime-head">累计专注</div>
+    <div class="lifetime-cards">
+      <div class="lifetime-card">
+        <div class="stat-value">{{ totalFocusCount }}</div>
+        <div class="stat-label">累计番茄</div>
+      </div>
+      <div class="lifetime-card">
+        <div class="stat-value">{{ lifetimeHours }}<span class="stat-unit">h</span></div>
+        <div class="stat-label">累计小时</div>
+      </div>
+      <div class="lifetime-card">
+        <div class="stat-value">{{ avgPomodoroMinutes }}</div>
+        <div class="stat-label">平均每个(分)</div>
+      </div>
     </div>
 
     <!-- 详细数据弹窗 -->
@@ -953,19 +980,59 @@ function barPx(count: number): number {
   grid-area: stats;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  /* [需求] 瘦身：9 → 6 → 5 */
+  gap: 5px;
   min-height: 0;
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: 14px;
-  padding: 12px 14px;
+  /* [需求] 瘦身：12/14 → 9/12 */
+  padding: 9px 12px;
   box-shadow: 0 2px 12px var(--shadow);
   overflow-y: auto;
+}
+
+/* [需求] 「累计专注」：瘦身省下的空白填充块（比四宫格更矮一档） */
+.lifetime-head {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.lifetime-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.lifetime-card {
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  padding: 6px 9px;
+  text-align: center;
+}
+
+.lifetime-card .stat-value {
+  font-size: 16px;
+}
+
+.lifetime-card .stat-label {
+  font-size: 10.5px;
 }
 
 /* 底部热力条（网格: heat 区） */
 .heatmap-block {
   grid-area: heat;
+}
+
+/* [需求] 兜底：整体瘦身已把必要高度压到接近可视区，但窗口再矮一点仍会溢出。
+   sticky 让热力条吸附在可视区底部 —— 溢出时它盖在内容上而不是被顶出去，始终可见 */
+@media (max-height: 700px) {
+  .heatmap-block {
+    position: sticky;
+    bottom: 0;
+    z-index: 6;
+  }
 }
 
 .block-title {
@@ -1010,7 +1077,8 @@ function barPx(count: number): number {
   display: grid;
   grid-template-columns: 1fr 1fr;
   grid-template-rows: 1fr 1fr;
-  gap: 8px;
+  /* [需求] 瘦身：8 → 6 */
+  gap: 6px;
   /* [改版] 拉伸占满统计卡剩余高度（最大化时四宫格随之变高） */
   flex: 1.15;
   min-height: 0;
@@ -1020,7 +1088,8 @@ function barPx(count: number): number {
 .week-chart {
   background: var(--bg-secondary);
   border-radius: 10px;
-  padding: 9px 12px;
+  /* [需求] 瘦身：9/12 → 6/10 */
+  padding: 6px 10px;
   /* [改版] 拉伸占剩余高度，柱子贴底对齐 */
   flex: 1;
   display: flex;
@@ -1085,7 +1154,8 @@ function barPx(count: number): number {
 }
 
 .bar2.zero {
-  background: var(--heatmap-empty);
+  /* [需求] 0 个的日子不画柱子（原来是 heatmap-empty 灰块占位） */
+  background: transparent;
   border-radius: 2px;
 }
 
@@ -1510,7 +1580,8 @@ function barPx(count: number): number {
 .stat-card {
   background: var(--bg-secondary);
   border-radius: 10px;
-  padding: 8px 10px;
+  /* [需求] 瘦身：8/10 → 6/9 */
+  padding: 6px 9px;
   text-align: left;
   transition: background 0.2s ease;
   /* [改版] 单元格拉高后内容垂直居中 */
@@ -1556,7 +1627,8 @@ function barPx(count: number): number {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: 14px;
-  padding: 8px 16px 10px;
+  /* [需求] 瘦身：8/10 → 5/7 */
+  padding: 5px 16px 7px;
   box-shadow: 0 2px 12px var(--shadow);
   position: relative;
 }
@@ -1596,7 +1668,8 @@ function barPx(count: number): number {
   flex: 1;
   min-width: 0;
   /* [改版] 去掉 22px 限宽：格子均分整行，宽窗口下热力条铺满中段 */
-  height: 28px;
+  /* [需求] 瘦身：28 → 20 */
+  height: 20px;
   border-radius: 4px;
   display: flex;
   align-items: center;

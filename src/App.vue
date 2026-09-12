@@ -504,10 +504,12 @@ main {
     "timer timer"
     "tasks stats"
     "heat heat";
-  gap: 10px;
+  /* [需求] 瘦身：默认窗口（867×592 CSS px）下三段式固有必要高度是 603px、可视区只有 544px，
+     热力条会被顶出可视区。这里连同各卡片内边距一起收窄 ~59px，让三行完整显示、不出现滚动条 */
+  gap: 7px;
   align-items: stretch;
   min-height: 100%;
-  padding: 12px 14px;
+  padding: 6px 12px;
 }
 
 /* 顶部计时卡 */
@@ -523,7 +525,8 @@ main {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: 14px;
-  padding: 12px 18px 14px;
+  /* [需求] 瘦身：上下内边距 12/14 → 8/9，配合缩小的倒计时字号让计时卡从 78px 降到 ~52px */
+  padding: 8px 18px 9px;
   box-shadow: 0 2px 12px var(--shadow);
 }
 
