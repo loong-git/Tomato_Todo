@@ -75,10 +75,10 @@ interface TaskGroup {
   tasks: typeof taskStore.tasks
 }
 
-const activeTaskGroups = computed<TaskGroup[]>(() => {
+function groupByDate(tasks: typeof taskStore.tasks): TaskGroup[] {
   const groups: Map<string, typeof taskStore.tasks> = new Map()
 
-  for (const task of taskStore.activeTasks) {
+  for (const task of tasks) {
     const key = getDateKey(task.createdAt)
     if (!groups.has(key)) {
       groups.set(key, [])
@@ -87,21 +87,12 @@ const activeTaskGroups = computed<TaskGroup[]>(() => {
   }
 
   return Array.from(groups.entries()).map(([dateKey, tasks]) => ({ dateKey, tasks }))
-})
+}
 
-const historyTaskGroups = computed<TaskGroup[]>(() => {
-  const groups: Map<string, typeof taskStore.tasks> = new Map()
+// [需求] 今日任务区高度固定为"三张卡片"，超出靠列表内部滚动（不再折叠/显示更多）
+const activeTaskGroups = computed<TaskGroup[]>(() => groupByDate(taskStore.activeTasks))
 
-  for (const task of taskStore.historyTasks) {
-    const key = getDateKey(task.createdAt)
-    if (!groups.has(key)) {
-      groups.set(key, [])
-    }
-    groups.get(key)!.push(task)
-  }
-
-  return Array.from(groups.entries()).map(([dateKey, tasks]) => ({ dateKey, tasks }))
-})
+const historyTaskGroups = computed<TaskGroup[]>(() => groupByDate(taskStore.historyTasks))
 
 function addTask() {
   if (newTaskName.value.trim()) {
@@ -823,14 +814,19 @@ function deleteArchivedTask(taskId: string) {
 }
 
 .task-groups {
-  flex: 1;
+  /* [需求] 高度写死 =「今天」标题 + 3 张任务卡（实测 标题 38 + 3×卡 70 + 3×gap 6 ≈ 266，取 270）。
+     不用 flex:1 + max-height：那样容器高度跟着剩余空间浮动，加到第 3 条时会一并被"托高"一点。
+     现在 flex-basis 固定 270，任务多少都一样高，超出部分在盒子内部滚动。 */
+  flex: 0 1 auto;
+  height: 270px;
   min-height: 0;
   overflow-y: auto;
-  /* [改版] 列表随中行高度伸缩（窗口最大化时中行被 1fr 拉高，列表跟着变高可看更多任务） */
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding-right: 6px;
+  /* 历史任务按钮用 margin-top:auto 贴底，这里补上与列表的最小间距 */
+  margin-bottom: 8px;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(231, 76, 60, 0.2) transparent;
@@ -1349,7 +1345,7 @@ function deleteArchivedTask(taskId: string) {
   min-width: 0;
 }
 
-/* 历史任务按钮 */
+/* 历史任务按钮（列表不再撑满，靠 margin-top:auto 始终贴底） */
 .history-btn {
   display: flex;
   align-items: center;
@@ -1357,7 +1353,8 @@ function deleteArchivedTask(taskId: string) {
   gap: 6px;
   width: 100%;
   padding: 12px;
-  margin-top: 8px;
+  /* auto 让它贴底：列表区改为固定高度后，卡片里的剩余空间不再由它吃下 */
+  margin-top: auto;
   border: 1px dashed var(--border-color);
   border-radius: 12px;
   background: transparent;
