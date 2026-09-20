@@ -299,17 +299,25 @@ function onResizeDown(e: PointerEvent) {
 
 function onResizeMove(e: PointerEvent) {
   if (!resizing.value) return
+  // [需求] 拖动中窗口本体不动，只更新白色虚线预览框（rAF 节流 IPC）；
+  // 松开鼠标左键才把最终宽度一次性发给主进程
   resizePendingW = Math.round(resizeStartW + (e.clientX - resizeStartX))
   if (!resizeRaf) {
     resizeRaf = requestAnimationFrame(() => {
       resizeRaf = 0
-      window.electronAPI?.window.resizeTo(resizePendingW)
+      window.electronAPI?.window.resizePreview(resizePendingW)
     })
   }
 }
 
 function onResizeUp() {
+  if (!resizing.value) return
   resizing.value = false
+  window.electronAPI?.window.resizePreviewHide()
+  if (resizePendingW > 0) {
+    window.electronAPI?.window.resizeTo(resizePendingW)
+    resizePendingW = 0
+  }
 }
 
 function closeWindow() {

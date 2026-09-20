@@ -61,7 +61,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('window:maxState', (_, maximized) => callback(maximized))
     },
     // [改版] 仅右缘调宽：把目标宽度发给主进程（主进程夹紧后 setBounds）
-    resizeTo: (width: number) => ipcRenderer.send('window:resize-to', width)
+    resizeTo: (width: number) => ipcRenderer.send('window:resize-to', width),
+    // [需求] 拉宽预览：拖动中更新白色虚线边框预览窗 / 松手隐藏
+    resizePreview: (width: number) => ipcRenderer.send('window:resize-preview', width),
+    resizePreviewHide: () => ipcRenderer.send('window:resize-preview-hide')
   },
   tray: {
     updateState: (data: { timeLeft: number; isRunning: boolean }) => {

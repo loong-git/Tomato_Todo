@@ -46,6 +46,9 @@ interface ElectronAPI {
     onMaxState: (callback: (maximized: boolean) => void) => void
     // [改版] 仅右缘调宽：目标宽度（主进程夹紧到 [1056, 屏幕可用宽]）
     resizeTo: (width: number) => void
+    // [需求] 拉宽预览：拖动中显示白色虚线边框预览窗标出最终宽度位置
+    resizePreview: (width: number) => void
+    resizePreviewHide: () => void
   }
   tray: {
     updateState: (data: { timeLeft: number; isRunning: boolean }) => void
