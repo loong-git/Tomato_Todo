@@ -188,7 +188,7 @@ function formatTime(seconds: number): string {
 }
 
 // [改版] 窗口基准：宽 1400、高 928（物理像素），按显示器缩放换算成 DIP
-// 高度固定（min=max）；宽度可拉，上限 MAX_WIN_W（DIP，固定值，不贴屏幕右缘）
+// 高度固定（min=max）；宽度可拉，区间 [MIN_WIN_W, MAX_WIN_W]（DIP）
 let MIN_WIN_W = 1400
 let WIN_H = 928
 const MAX_WIN_W = 1100
@@ -213,17 +213,15 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: MIN_WIN_W,
     height: WIN_H,
-    // [改版] 高度锁死（min=max），宽度只能通过渲染端右缘把手（resize-handle → resize-to IPC）调整。
-    // resizable: false —— 系统四边缩放边框整体关闭：
-    //   1) 上下边缘不再显示 ns-resize 双箭头（高度固定拖不动却显示箭头，误导）
-    //   2) 不会再出现"有时抓到系统边框拉不动"的随机行为（系统 resize 路径被守卫拦截）
-    //   3) 程序化 setBounds（把手 IPC / 自定义最大化）不受 resizable 影响
-    // 注意 resizable:false 会剥掉 WS_THICKFRAME 最大化样式位——原生最大化手势本就
-    // 已禁用（maximizable:false），自定义最大化走 window:toggle-maximize IPC 不受影响。
+    // [改版·原生缩放] 宽度缩放走 Windows 原生边框（拖窗口边缘），无自绘把手、无虚线预览框。
+    //   1) 高度锁死：minHeight = maxHeight = WIN_H
+    //   2) 宽度区间：minWidth = MIN_WIN_W、maxWidth = MAX_WIN_W，由 Windows 原生夹紧
+    //   3) 拖动中窗口边缘实时跟随鼠标（窗口自己的边缘，不是幽灵框）
     minWidth: MIN_WIN_W,
+    maxWidth: MAX_WIN_W,
     minHeight: WIN_H,
     maxHeight: WIN_H,
-    resizable: false,
+    resizable: true,
     // 双击标题栏拖动区的原生最大化有半屏 bug（resizable+污染的还原位置），已禁用；
     // 最大化走自定义通道：双击 logo / ▢ 按钮 → window:toggle-maximize IPC
     maximizable: false,
@@ -240,40 +238,17 @@ function createWindow() {
     backgroundColor: bgColor
   })
 
-  // [改版] 仅右缘调宽守卫：x 或高度变化（左缘/上下/角拖拽）一律拒绝，
-  // 只放行"x 不动、高度不变、仅宽度变化"的右缘拖拽，宽度夹紧到 [MIN_WIN_W, 屏幕右界]。
-  // 最大化/还原过程放行（目标≈工作区，否则会把最大化拦腰截断导致窗口跳左上角）
-  mainWindow.on('will-resize', (event, newBounds) => {
+  // [改版·实时缩放] 守卫只剩两条（resizable:false 后基本不触发，保留作兜底）：
+  //   - 程序化 setSize/setBounds（右缘把手 / 自定义最大化）放行
+  //   - 自定义最大化期间锁死一切系统缩放
+  // ⚠️ 历史坑：旧版这里写过 `newBounds.x !== cur.x || newBounds.height !== cur.height → preventDefault`，
+  // 在 152.5% 非整数缩放下 newBounds 与 cur 会因 DIP 取整差 1（实测 cur.height=610 而 WIN_H=609），
+  // 条件恒真 → 所有原生缩放全被拦死（用户表现："抓到系统边框拉不动"）。DIP 值绝不能用等值比较。
+  mainWindow.on('will-resize', (event) => {
     if (!mainWindow || mainWindow.isDestroyed()) return
-    // 程序化 setBounds 放行（否则会拦截我们自己的最大化/还原/调宽）
     if (applyingBounds) return
-    // 自定义最大化期间：锁死一切系统缩放
     if (customMaxBounds) {
       event.preventDefault()
-      return
-    }
-    const cur = mainWindow.getBounds()
-    const { screen } = require('electron')
-    const wa = screen.getDisplayMatching(cur).workArea
-    const nearWorkArea =
-      Math.abs(newBounds.x - wa.x) < 12 &&
-      Math.abs(newBounds.y - wa.y) < 12 &&
-      Math.abs(newBounds.width - wa.width) < 24 &&
-      Math.abs(newBounds.height - wa.height) < 24
-    if (nearWorkArea) return
-    if (newBounds.x !== cur.x || newBounds.height !== cur.height) {
-      event.preventDefault()
-      return
-    }
-    // [修复] 与 resize-to 同步：最宽 = min(MAX_WIN_W, 工作区宽 - 窗口 x)
-    const maxW = Math.min(MAX_WIN_W, Math.max(MIN_WIN_W, wa.width - cur.x))
-    if (newBounds.width < MIN_WIN_W || newBounds.width > maxW) {
-      event.preventDefault()
-      programmaticSetBounds({
-        x: cur.x, y: cur.y,
-        width: Math.max(MIN_WIN_W, Math.min(newBounds.width, maxW)),
-        height: cur.height
-      })
     }
   })
 
@@ -358,79 +333,9 @@ app.on('window-all-closed', () => {
 })
 
 // IPC handlers
-// [改版] 仅右缘调宽：渲染进程拖拽把手发目标宽度，这里夹紧后改宽（高度/位置不变）
-// 最大化状态下忽略（不打断系统最大化）
-// [修复] 拖拽期间锚定 x/y：非整数缩放（152.5%）下连续 setBounds 会让 Windows 把窗口
-// x 往左挪，而 maxW = 屏宽 - x 每次重读又随 x 变大 → 正反馈（用户表现：往右拉宽时
-// 左边同时往左跑）。锚定拖拽起点的 x/y，拖拽中每次 setBounds 都强制用起点位置；
-// 超过 800ms 无新调用视为拖拽结束，下次重新锚定
-let resizeAnchor: { x: number; y: number; at: number } | null = null
-ipcMain.on('window:resize-to', (_event, width: number) => {
-  if (!mainWindow || mainWindow.isDestroyed() || customMaxBounds) return
-  const { screen } = require('electron')
-  const display = screen.getDisplayMatching(mainWindow.getBounds())
-  const now = Date.now()
-  if (!resizeAnchor || now - resizeAnchor.at > 800) {
-    const [x, y] = mainWindow.getPosition()
-    resizeAnchor = { x, y, at: now }
-  }
-  resizeAnchor.at = now
-  const maxW = Math.min(MAX_WIN_W, Math.max(MIN_WIN_W, display.workArea.width - resizeAnchor.x))
-  const w = Math.max(MIN_WIN_W, Math.min(Math.round(width), maxW))
-  programmaticSetBounds({ x: resizeAnchor.x, y: resizeAnchor.y, width: w, height: WIN_H })
-})
-
-// [需求] 拉宽预览窗：拖动中窗口本体不动，用一个透明覆盖窗画白色虚线边框，
-// 标出松手后主窗口将变成的位置和宽度；松手后隐藏
-let resizePreviewWin: BrowserWindow | null = null
-
-function ensureResizePreview(): BrowserWindow {
-  if (resizePreviewWin && !resizePreviewWin.isDestroyed()) return resizePreviewWin
-  resizePreviewWin = new BrowserWindow({
-    width: MIN_WIN_W,
-    height: WIN_H,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    skipTaskbar: true,
-    focusable: false,
-    alwaysOnTop: true,
-    show: false,
-    webPreferences: {}
-  })
-  // 不响应任何鼠标事件（纯视觉层）
-  resizePreviewWin.setIgnoreMouseEvents(true)
-  resizePreviewWin.loadURL(
-    'data:text/html,<body style="margin:0;background:transparent"><div style="position:fixed;inset:0;box-sizing:border-box;border:2px dashed rgba(255,255,255,.7);border-radius:14px;background:rgba(255,255,255,.04)"></div></body>'
-  )
-  return resizePreviewWin
-}
-
-ipcMain.on('window:resize-preview', (_event, width: number) => {
-  if (!mainWindow || mainWindow.isDestroyed() || customMaxBounds) return
-  const { screen } = require('electron')
-  const display = screen.getDisplayMatching(mainWindow.getBounds())
-  const now = Date.now()
-  if (!resizeAnchor || now - resizeAnchor.at > 800) {
-    const [x, y] = mainWindow.getPosition()
-    resizeAnchor = { x, y, at: now }
-  }
-  resizeAnchor.at = now
-  const maxW = Math.min(MAX_WIN_W, Math.max(MIN_WIN_W, display.workArea.width - resizeAnchor.x))
-  const w = Math.max(MIN_WIN_W, Math.min(Math.round(width), maxW))
-  const win = ensureResizePreview()
-  win.setBounds({ x: resizeAnchor.x, y: resizeAnchor.y, width: w, height: WIN_H })
-  if (!win.isVisible()) win.showInactive()
-})
-
-ipcMain.on('window:resize-preview-hide', () => {
-  if (resizePreviewWin && !resizePreviewWin.isDestroyed() && resizePreviewWin.isVisible()) {
-    resizePreviewWin.hide()
-  }
-})
+// [改版·原生缩放] 宽度缩放完全交给 Windows 原生边框：没有 resize-to / resize-preview /
+// resize-preview-hide 通道，也没有自绘把手与虚线预览窗。宽度区间由 minWidth/maxWidth 约束、
+// 高度由 minHeight/maxHeight 锁死，位置不动由 will-resize 守卫保证。
 
 // [改版] 自定义最大化：不用原生 maximize()（其依赖的 Windows 还原位置会被
 // will-resize preventDefault 污染成半屏），自己记住还原位置 + setBounds 到工作区
@@ -452,13 +357,14 @@ function programmaticSetBounds(b: Electron.Rectangle) {
 ipcMain.on('window:toggle-maximize', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (customMaxBounds) {
-    // 还原：先回原尺寸（此时仍在放开的约束内），再恢复高度锁定
+    // 还原：先回原尺寸（此时仍在放开的约束内），再恢复尺寸约束
     const b = customMaxBounds
     customMaxBounds = null
     programmaticSetBounds(b)
-    mainWindow.setMaximumSize(10000, WIN_H)
+    // [改版·实时缩放] 还原后恢复"高度锁死 + 宽度上限"（程序化 setSize 也遵守）
+    mainWindow.setMaximumSize(MAX_WIN_W, WIN_H)
     mainWindow.webContents.send('window:maxState', false)
-    fileLog(`[Window] 还原窗口: ${JSON.stringify(b)}（恢复 maxHeight=${WIN_H}）`)
+    fileLog(`[Window] 还原窗口: ${JSON.stringify(b)}（恢复 maxWidth=${MAX_WIN_W} maxHeight=${WIN_H}）`)
   } else {
     // 最大化：BrowserWindow 的 maxHeight 会被 setBounds 遵守，
     // 不解除会把工作区高度夹成 WIN_H → "半屏"。先放开再铺满。

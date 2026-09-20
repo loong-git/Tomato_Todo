@@ -248,11 +248,8 @@ const currentTaskName = computed(() => {
   return taskStore.tasks.find(t => t.id === ids[0])?.name || ''
 })
 
-// [优化] 今日目标进度（计时卡中部）：todayCount / dailyGoal，封顶 100%
-const goalPct = computed(() => {
-  const goal = settingsStore.settings.dailyGoal || 1
-  return Math.min(100, Math.round((statsStore.todayCount / goal) * 100))
-})
+// [改版] goalPct 已删除：计时卡里的「0/8 个番茄 + 进度条 + 0%」整块去掉了
+// （与「数据」卡的「完成番茄 0/8 · 完成 0%」重复），这个 computed 随之成为死代码
 
 // 窗口控制
 function minimizeWindow() {
@@ -283,42 +280,8 @@ function onTitleBlankPointerDown(e: PointerEvent) {
   }
 }
 
-/* [改版] 仅右缘调宽把手：拖动把目标宽度发给主进程（主进程夹紧后 setBounds） */
-const resizing = ref(false)
-let resizeStartX = 0
-let resizeStartW = 0
-let resizePendingW = 0
-let resizeRaf = 0
-
-function onResizeDown(e: PointerEvent) {
-  resizeStartX = e.clientX
-  resizeStartW = window.innerWidth
-  resizing.value = true
-  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-}
-
-function onResizeMove(e: PointerEvent) {
-  if (!resizing.value) return
-  // [需求] 拖动中窗口本体不动，只更新白色虚线预览框（rAF 节流 IPC）；
-  // 松开鼠标左键才把最终宽度一次性发给主进程
-  resizePendingW = Math.round(resizeStartW + (e.clientX - resizeStartX))
-  if (!resizeRaf) {
-    resizeRaf = requestAnimationFrame(() => {
-      resizeRaf = 0
-      window.electronAPI?.window.resizePreview(resizePendingW)
-    })
-  }
-}
-
-function onResizeUp() {
-  if (!resizing.value) return
-  resizing.value = false
-  window.electronAPI?.window.resizePreviewHide()
-  if (resizePendingW > 0) {
-    window.electronAPI?.window.resizeTo(resizePendingW)
-    resizePendingW = 0
-  }
-}
+/* [改版·原生缩放] 宽度缩放走 Windows 原生边框（拖窗口边缘），渲染端不再有
+   把手 / rAF 节流 IPC / 虚线预览框 */
 
 function closeWindow() {
   console.log('[Renderer] 关闭按钮点击')
@@ -435,14 +398,12 @@ async function openFocusMode(mode: 'compact') {
             <TimerDisplay />
             <div class="timer-meta">
               <ModeSelector />
-              <div class="goal-slot">
-                <div class="goal-line">
-                  <b>{{ statsStore.todayCount }}</b>/{{ settingsStore.settings.dailyGoal }} 个番茄
-                  <span v-if="timerStore.isRunning && currentTaskName" class="goal-task">正在专注 · {{ currentTaskName }}</span>
-                  <span class="goal-pct">{{ goalPct }}%</span>
-                </div>
-                <div class="goal-bar"><i :style="{ width: goalPct + '%' }"></i></div>
-              </div>
+              <!-- [改版] 原「0/8 个番茄 + 进度条 + 0%」整块已删除：与「数据」卡的
+                   「完成番茄 0/8 · 完成 0%」完全重复（用户要求去掉）。
+                   只保留计时卡独有的「正在专注 · 任务名」提示 -->
+              <span v-if="timerStore.isRunning && currentTaskName" class="goal-task">
+                正在专注 · {{ currentTaskName }}
+              </span>
             </div>
             <div class="timer-ctl">
               <TimerControls />
@@ -454,15 +415,7 @@ async function openFocusMode(mode: 'compact') {
       </div>
     </main>
 
-    <!-- [改版] 仅右缘调宽：拖拽把手（高度锁死，宽度最小 1056） -->
-    <div
-      class="resize-handle"
-      title="拖动调整宽度"
-      @pointerdown="onResizeDown"
-      @pointermove="onResizeMove"
-      @pointerup="onResizeUp"
-      @pointercancel="onResizeUp"
-    ></div>
+    <!-- [改版·原生缩放] 右缘把手已删除：宽度缩放走 Windows 原生边框（拖窗口边缘） -->
 
     <!-- [方案1] 内嵌沉浸模式：覆盖层盖住整个主窗口，计时直接读 store，Esc 退出（计时继续） -->
     <div v-if="inlineFocus" class="focus-inline">
@@ -516,7 +469,11 @@ main {
      热力条会被顶出可视区。这里连同各卡片内边距一起收窄 ~59px，让三行完整显示、不出现滚动条 */
   gap: 7px;
   align-items: stretch;
-  min-height: 100%;
+  /* [修复] 必须是 height 而不是 min-height：
+     用 min-height 时网格高度"不确定"，中间那行 minmax(0,1fr) 会退化成按内容撑开 ——
+     统计卡内容一变大就把整页顶高、主页面出现纵向滚动条（实测 562 可视 / 598 内容）。
+     改成 height:100% 后容器高度确定，1fr 才真正"吃掉剩余空间"，主页面固定不滚动 */
+  height: 100%;
   padding: 6px 12px;
 }
 
@@ -544,58 +501,20 @@ main {
   align-items: center;
   gap: 14px;
   min-width: 0;
-  /* [需求] 模式 tab 靠左（贴着倒计时数字），进度条占中部剩余空间 */
+  /* [改版] 原中部「今日目标进度条」已删除，这里现在只放模式 tab + 正在专注提示 */
   min-height: 19px;
 }
 
-/* [优化] 今日目标进度（接 statsStore.todayCount / dailyGoal） */
-.goal-slot {
-  flex: 1;
-  min-width: 0;
-  padding: 0 6px;
-}
-
-.goal-line {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
+/* [改版] 计时卡只保留「正在专注 · 任务名」——进度条 / 0-8 个番茄 / 百分比已删
+   （与「数据」卡的「完成番茄」重复）。任务名过长时省略号截断 */
+.goal-task {
   font-size: 12.5px;
   color: var(--text-muted);
-  margin-bottom: 6px;
   white-space: nowrap;
-}
-
-.goal-line b {
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.goal-task {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
   flex-shrink: 1;
-}
-
-.goal-pct {
-  margin-left: auto;
-  font-size: 11px;
-  flex-shrink: 0;
-}
-
-.goal-bar {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--border-color);
-  overflow: hidden;
-}
-
-.goal-bar i {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-  background: linear-gradient(90deg, var(--tomato-light), var(--tomato));
-  transition: width 0.3s ease;
 }
 
 .timer-ctl {
@@ -653,18 +572,7 @@ main {
   color: white;
 }
 
-/* [改版] 仅右缘调宽把手：全高 6px，悬停可见提示条 */
-.resize-handle {
-  position: fixed;
-  right: 0;
-  top: 0;
-  width: 6px;
-  height: 100vh;
-  cursor: ew-resize;
-  z-index: 999;
-  -webkit-app-region: no-drag;
-  touch-action: none;
-}
+/* [改版·原生缩放] .resize-handle 样式已删除：宽度缩放走 Windows 原生边框 */
 
 /* ===== [方案1] 内嵌沉浸模式覆盖层（对齐 demo-focus-inline，主题变量适配） ===== */
 .focus-inline {
@@ -766,8 +674,13 @@ main {
   --blob2-color: rgba(52, 152, 219, 0.08);
 
   /* Heatmap colors */
-  --heatmap-empty: rgba(45, 37, 34, 0.3);
-  --heatmap-1: rgba(231, 76, 60, 0.25);
+  /* [修复] 原值 rgba(45,37,34,0.3) 与卡片底色 rgba(45,37,34,0.85) 几乎同色，
+     叠加后完全看不出格子边界（用户反馈"没有记录的框很难看清"）。
+     改为淡白填充，在深色卡片上形成清晰但克制的浅色块 */
+  --heatmap-empty: rgba(250, 245, 240, 0.08);
+  /* [修复] l1 原为 0.25，其亮度(≈54)与空格子填充(≈53)几乎相同 → 只有 1 个番茄的日子
+     看起来和没记录一样。抬到 0.35(≈61)，保证 空格(53) < l1(61) < l2(68) < l3(83) < l4(97) 单调递增 */
+  --heatmap-1: rgba(231, 76, 60, 0.35);
   --heatmap-2: rgba(231, 76, 60, 0.45);
   --heatmap-3: rgba(231, 76, 60, 0.65);
   --heatmap-4: rgba(231, 76, 60, 0.85);
@@ -795,8 +708,11 @@ main {
   --blob2-color: rgba(52, 152, 219, 0.05);
 
   /* Heatmap colors - lighter for light theme */
-  --heatmap-empty: rgba(45, 36, 32, 0.1);
-  --heatmap-1: rgba(231, 76, 60, 0.2);
+  /* [修复] 同上：0.1 在白卡上偏淡，提到 0.13 让空格子边界清晰 */
+  --heatmap-empty: rgba(45, 36, 32, 0.13);
+  /* [修复] l1 原为 0.2，在白底上比空格子(0.13)还浅 → 1 个番茄反而像"空"。
+     抬到 0.28，保证 空格(≈228) > l1(≈212) > l2(≈200) > l3(≈178) > l4(≈150) 亮度递减 */
+  --heatmap-1: rgba(231, 76, 60, 0.28);
   --heatmap-2: rgba(231, 76, 60, 0.35);
   --heatmap-3: rgba(231, 76, 60, 0.5);
   --heatmap-4: rgba(231, 76, 60, 0.7);

@@ -59,12 +59,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // [需求] 最大化状态回传：驱动 ▢ 按钮切换 最大化/向下还原 图标与提示
     onMaxState: (callback: (maximized: boolean) => void) => {
       ipcRenderer.on('window:maxState', (_, maximized) => callback(maximized))
-    },
-    // [改版] 仅右缘调宽：把目标宽度发给主进程（主进程夹紧后 setBounds）
-    resizeTo: (width: number) => ipcRenderer.send('window:resize-to', width),
-    // [需求] 拉宽预览：拖动中更新白色虚线边框预览窗 / 松手隐藏
-    resizePreview: (width: number) => ipcRenderer.send('window:resize-preview', width),
-    resizePreviewHide: () => ipcRenderer.send('window:resize-preview-hide')
+    }
+    // [改版·原生缩放] resizeTo / resizePreview / resizePreviewHide 已删除：
+    // 宽度缩放走 Windows 原生边框，渲染端不需要发目标宽度
   },
   tray: {
     updateState: (data: { timeLeft: number; isRunning: boolean }) => {

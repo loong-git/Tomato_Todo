@@ -44,11 +44,8 @@ interface ElectronAPI {
     toggleMaximize: () => void
     // [需求] 最大化状态回传：驱动 ▢ 按钮切换 最大化/向下还原 图标与提示
     onMaxState: (callback: (maximized: boolean) => void) => void
-    // [改版] 仅右缘调宽：目标宽度（主进程夹紧到 [1056, 屏幕可用宽]）
-    resizeTo: (width: number) => void
-    // [需求] 拉宽预览：拖动中显示白色虚线边框预览窗标出最终宽度位置
-    resizePreview: (width: number) => void
-    resizePreviewHide: () => void
+    // [改版·原生缩放] resizeTo / resizePreview / resizePreviewHide 已删除：
+    // 宽度缩放走 Windows 原生边框（minWidth/maxWidth 约束 + 高度 min=max 锁死）
   }
   tray: {
     updateState: (data: { timeLeft: number; isRunning: boolean }) => void
