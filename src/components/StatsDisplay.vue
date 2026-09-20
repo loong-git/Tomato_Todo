@@ -280,7 +280,7 @@ const totalFocusHours = computed(() => {
   return formatHours(totalFocusSeconds.value)
 })
 
-// [需求] 平均每个番茄的时长（分钟）—— 累计专注模块用
+// [需求] 平均每个番茄的时长（分钟）—— 累计专注三卡用
 const avgPomodoroMinutes = computed(() => {
   if (totalFocusCount.value <= 0) return 0
   return Math.round(totalFocusSeconds.value / totalFocusCount.value / 60)
@@ -563,11 +563,76 @@ const weekTrend = computed(() => {
   return pct >= 0 ? `比上周 +${pct}%` : `比上周 ${pct}%`
 })
 
-// 柱高（px）：最高的一天 38px；[需求] 0 个不再画 4px 灰块——没专注的日子就是空的
-function barPx(count: number): number {
-  if (count <= 0) return 0
-  return Math.max(5, Math.round((count / weekBars.value.max) * 38))
+// ===== [改版·分页] 「数据」卡拆成两页：第 1 页概览 / 第 2 页趋势 =====
+// 原因：柱状图与今日目标、2×2 统计卡、累计专注挤在同一段纵向空间里，柱高上限只有 38px；
+// 且 0 个的日子不画柱 → 本周全 0 时图区完全空白。拆页后柱状图独占整卡高度（柱高可达 ~250px）。
+const STATS_PAGES = 2
+const statsPage = ref(0)
+const pagerViewport = ref<HTMLElement | null>(null)
+const pagerDx = ref(0)                 // 拖拽中的横向位移（px）
+const pagerDragging = ref(false)
+let pagerStartX = 0
+
+function statsGo(n: number) {
+  statsPage.value = Math.max(0, Math.min(STATS_PAGES - 1, n))
+  pagerDx.value = 0
 }
+
+function onPagerDown(e: PointerEvent) {
+  // 点在按钮上（详细数据 / 数据管理 / 圆点 / 箭头）时不启动拖拽
+  if ((e.target as HTMLElement).closest('button')) return
+  pagerDragging.value = true
+  pagerStartX = e.clientX
+  pagerDx.value = 0
+  try { pagerViewport.value?.setPointerCapture(e.pointerId) } catch { /* 合成事件没有可捕获的指针 */ }
+}
+
+function onPagerMove(e: PointerEvent) {
+  if (!pagerDragging.value) return
+  let dx = e.clientX - pagerStartX
+  // 首尾页继续往外拖 → 阻尼，给出"到头了"的手感
+  if ((statsPage.value === 0 && dx > 0) || (statsPage.value === STATS_PAGES - 1 && dx < 0)) dx *= 0.32
+  pagerDx.value = dx
+}
+
+function onPagerUp() {
+  if (!pagerDragging.value) return
+  pagerDragging.value = false
+  const threshold = (pagerViewport.value?.clientWidth ?? 0) / 6   // 拖过 1/6 卡宽即翻页
+  const dx = pagerDx.value
+  if (dx <= -threshold) statsGo(statsPage.value + 1)
+  else if (dx >= threshold) statsGo(statsPage.value - 1)
+  else statsGo(statsPage.value)                                    // 不足阈值 → 回弹
+}
+
+const pagerStyle = computed(() => ({
+  transform: `translateX(calc(${-statsPage.value * 100}% + ${pagerDx.value}px))`,
+  transition: pagerDragging.value ? 'none' : ''
+}))
+
+// 柱高：整组「数值 + 柱」占图表区高度的百分比，最高的一天 = 100%
+function barPct(count: number): number {
+  if (count <= 0) return 0
+  return Math.max(9, Math.round((count / weekBars.value.max) * 100))
+}
+
+// 第 2 页页脚小结
+const weekAvg = computed(() => (weekBars.value.total / 7).toFixed(1))
+const weekBest = computed(() => {
+  const days = weekBars.value.days
+  return days.reduce((a, b) => (b.count > a.count ? b : a), days[0])
+})
+
+// 第 1 页统计卡副信息（都是页面上别处看不到的上下文）
+const todayMinutesHours = computed(() => (totalFocusMinutes.value / 60).toFixed(1))
+const todayDonePct = computed(() => {
+  const goal = settingsStore.settings.dailyGoal ?? 0
+  return goal > 0 ? Math.round((todayCount.value / goal) * 100) : 0
+})
+const yesterdayPomodoros = computed(() => Math.round((parseFloat(yesterdayHours.value) || 0) * 60 / 25))
+const goalRemainHours = computed(() =>
+  Math.max(0, dailyHourGoal.value - totalFocusHoursToday.value).toFixed(1)
+)
 
 </script>
 
@@ -588,102 +653,111 @@ function barPx(count: number): number {
       </div>
     </div>
 
-    <!-- 今日目标小时数（横条进度） -->
-    <div class="hour-goal-bar" :class="{ completed: isHourGoalCompleted }">
-      <div class="goal-header">
-        <div class="goal-icon">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <polyline points="12 6 12 12 16 14"/>
-          </svg>
-        </div>
-        <div class="goal-info">
-          <div class="goal-label">今日目标</div>
-          <div class="goal-value">
-            <span class="current">{{ totalFocusHoursToday.toFixed(1) }}</span>
-            <span class="separator">/</span>
-            <span class="target">{{ dailyHourGoal }}</span>
-            <span class="unit">小时</span>
-          </div>
-        </div>
-        <div class="goal-percent">{{ hourGoalPercent }}%</div>
-      </div>
-      <div class="goal-progress">
-        <!-- [需求] 进度条视觉满格即停（宽度封顶 100%），百分比数字显示真实值（可超 100%） -->
-        <div class="goal-progress-fill" :style="{ width: Math.min(100, hourGoalPercent) + '%' }"></div>
-      </div>
-    </div>
+    <!-- [改版·分页] 第 1 页「概览」/ 第 2 页「趋势」：柱状图独占整卡高度。
+         翻页三种方式都支持：内容区横向拖拽 / 底部 ‹ › 箭头（hover 才显）/ 圆点指示器 -->
+    <div
+      ref="pagerViewport"
+      class="pager-viewport"
+      :class="{ grabbing: pagerDragging }"
+      @pointerdown="onPagerDown"
+      @pointermove="onPagerMove"
+      @pointerup="onPagerUp"
+      @pointercancel="onPagerUp"
+    >
+      <div class="pager-track" :style="pagerStyle">
 
-    <!-- [改版 A+B] 本周柱状图 -->
-    <div class="week-chart">
-      <div class="week-head">
-        <span class="wl">本周番茄</span>
-        <span class="wr">共 <b>{{ weekBars.total }}</b> 个 · {{ weekTrend }}</span>
-      </div>
-      <div class="bars">
-        <div
-          v-for="(d, i) in weekBars.days"
-          :key="i"
-          class="bcol"
-          :class="{ today: d.isToday }"
-        >
-          <span class="bval">{{ d.count }}</span>
-          <div
-            class="bar2"
-            :class="{ max: d.count > 0 && d.count === weekBars.max, zero: d.count === 0 }"
-            :style="{ height: barPx(d.count) + 'px' }"
-          ></div>
-          <span class="bday">{{ d.label }}</span>
+      <!-- ===== 第 1 页：概览 ===== -->
+      <div class="pager-page">
+      <!-- 今日目标小时数（横条进度）—— 第 1 页的视觉主角 -->
+      <div class="hour-goal-bar" :class="{ completed: isHourGoalCompleted }">
+        <div class="goal-header">
+          <div class="goal-icon">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <div class="goal-info">
+            <div class="goal-label">今日目标</div>
+            <div class="goal-value">
+              <span class="current">{{ totalFocusHoursToday.toFixed(1) }}</span>
+              <span class="separator">/</span>
+              <span class="target">{{ dailyHourGoal }}</span>
+              <span class="unit">小时</span>
+            </div>
+          </div>
+          <div class="goal-percent">{{ hourGoalPercent }}<span class="pct-sign">%</span></div>
+        </div>
+        <div class="goal-progress">
+          <!-- [需求] 进度条视觉满格即停（宽度封顶 100%），百分比数字显示真实值（可超 100%） -->
+          <div class="goal-progress-fill" :style="{ width: Math.min(100, hourGoalPercent) + '%' }"></div>
+        </div>
+        <div class="goal-sub">
+          <template v-if="isHourGoalCompleted">已达成今日目标 🎉</template>
+          <template v-else>还差 <b>{{ goalRemainHours }}</b> 小时达成今日目标</template>
         </div>
       </div>
-    </div>
+
+    <!-- [改版·分页] 本周柱状图已移到第 2 页，独占整卡高度（见下方 pager-page 第二页） -->
 
     <div class="stats-cards">
     <div class="stat-card">
-      <div class="stat-icon focus">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-          <circle cx="12" cy="12" r="10" opacity="0.2"/>
-          <circle cx="12" cy="12" r="6"/>
-        </svg>
+      <div class="stat-top">
+        <span class="stat-icon focus">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <circle cx="12" cy="12" r="10" opacity="0.2"/>
+            <circle cx="12" cy="12" r="6"/>
+          </svg>
+        </span>
+        <span class="stat-label">分钟</span>
       </div>
       <div class="stat-value">{{ Math.round(totalFocusMinutes) }}</div>
-      <div class="stat-label">分钟</div>
+      <div class="stat-sub">≈ {{ todayMinutesHours }} 小时</div>
     </div>
 
     <div class="stat-card">
-      <div class="stat-icon completed">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-        </svg>
+      <div class="stat-top">
+        <span class="stat-icon completed">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+          </svg>
+        </span>
+        <span class="stat-label">完成番茄</span>
       </div>
       <div class="stat-value">{{ todayCount }}<span class="stat-unit">/ {{ settingsStore.settings.dailyGoal }}</span></div>
-      <div class="stat-label">完成番茄</div>
+      <div class="stat-sub">完成 {{ todayDonePct }}%</div>
     </div>
 
     <div class="stat-card">
-      <div class="stat-icon streak">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-          <path d="M13.5.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/>
-        </svg>
+      <div class="stat-top">
+        <span class="stat-icon streak">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M13.5.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/>
+          </svg>
+        </span>
+        <span class="stat-label">连续记录</span>
       </div>
       <div class="stat-value">{{ currentStreak }}<span class="stat-unit">天</span></div>
-      <div class="stat-label">连续记录</div>
+      <div class="stat-sub">最高 {{ maxStreak }} 天</div>
     </div>
 
     <div class="stat-card">
-      <div class="stat-icon yesterday">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-          <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zM5 8V6h14v2H5zm2 4h5v5H7z"/>
-        </svg>
+      <div class="stat-top">
+        <span class="stat-icon yesterday">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zM5 8V6h14v2H5zm2 4h5v5H7z"/>
+          </svg>
+        </span>
+        <span class="stat-label">昨日小时</span>
       </div>
       <div class="stat-value">{{ yesterdayHours }}</div>
-      <div class="stat-label">昨日小时</div>
+      <div class="stat-sub">≈ {{ yesterdayPomodoros }} 个番茄</div>
     </div>
     </div>
 
-    <!-- [需求] 瘦身省下的纵向空间用「累计专注」补上（数据全部来自已有的 lifetimeStats），
-         不放这块统计卡底部会留 ~120px 空白 -->
-    <div class="lifetime-head">累计专注</div>
+    <!-- [改版] 「累计专注」标题已删除：三张卡自己的标签（累计番茄/累计小时）已经说明含义，
+         标题纯属重复。省下的 16px + 7px 间距补给上面的今日目标与统计卡。
+         累计数据仍可在「详细数据」弹窗和 CSV 导出里看到 -->
     <div class="lifetime-cards">
       <div class="lifetime-card">
         <div class="stat-value">{{ totalFocusCount }}</div>
@@ -697,6 +771,89 @@ function barPx(count: number): number {
         <div class="stat-value">{{ avgPomodoroMinutes }}</div>
         <div class="stat-label">平均每个(分)</div>
       </div>
+    </div>
+      </div>
+      <!-- ===== 第 1 页结束 ===== -->
+
+      <!-- ===== 第 2 页：趋势（柱状图独占整页高度） ===== -->
+      <div class="pager-page">
+        <div class="week-chart">
+          <div class="week-head">
+            <span class="wl">本周番茄</span>
+            <span class="wr">共 <b>{{ weekBars.total }}</b> 个 · {{ weekTrend }}</span>
+          </div>
+          <div class="bars">
+            <div
+              v-for="(d, i) in weekBars.days"
+              :key="i"
+              class="bcol"
+              :class="{ today: d.isToday }"
+            >
+              <!-- 整组「数值 + 柱」高度 = 占比 → 数值永远紧贴柱顶（原来数值固定在列顶、离柱子很远） -->
+              <div class="bcol-area">
+                <div
+                  class="bcol-group"
+                  :class="{ 'is-zero': d.count === 0 }"
+                  :style="{ height: barPct(d.count) + '%' }"
+                >
+                  <span class="bval">{{ d.count }}</span>
+                  <div
+                    v-if="d.count > 0"
+                    class="bar2"
+                    :class="{ max: d.count === weekBars.max }"
+                  ></div>
+                </div>
+              </div>
+              <span class="bday">{{ d.label }}</span>
+            </div>
+          </div>
+          <!-- [需求] 全 0 时原来图区完全空白，看不出是"没记录"还是"坏了" -->
+          <div v-if="weekBars.total === 0" class="chart-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M3 20h18M6 20V11M11 20V6M16 20v-6M21 20v-3"/>
+            </svg>
+            <span>本周还没有专注记录</span>
+          </div>
+        </div>
+
+        <div class="chart-foot">
+          <div class="foot-item"><b>{{ weekAvg }}</b><span>日均(个)</span></div>
+          <div class="foot-item">
+            <b>{{ weekBars.total === 0 ? '—' : weekBest.count }}</b>
+            <span>最高{{ weekBars.total === 0 ? '' : ' · ' + weekBest.label }}</span>
+          </div>
+          <div class="foot-item"><b>{{ todayCount }}</b><span>今日</span></div>
+        </div>
+      </div>
+      <!-- ===== 第 2 页结束 ===== -->
+
+      </div>
+    </div>
+
+    <!-- [需求] 翻页控件：箭头平时隐藏、hover 卡片才淡入；圆点常显作"这里能翻页"的提示 -->
+    <div class="pager-foot">
+      <button
+        class="pager-arrow"
+        :disabled="statsPage === 0"
+        title="上一页"
+        @click="statsGo(statsPage - 1)"
+      >‹</button>
+      <div class="pager-dots">
+        <button
+          v-for="i in STATS_PAGES"
+          :key="i"
+          class="pager-dot"
+          :class="{ on: statsPage === i - 1 }"
+          :title="`第 ${i} 页`"
+          @click="statsGo(i - 1)"
+        ></button>
+      </div>
+      <button
+        class="pager-arrow"
+        :disabled="statsPage === STATS_PAGES - 1"
+        title="下一页"
+        @click="statsGo(statsPage + 1)"
+      >›</button>
     </div>
 
     <!-- 详细数据弹窗 -->
@@ -989,17 +1146,14 @@ function barPx(count: number): number {
   /* [需求] 瘦身：12/14 → 9/12 */
   padding: 9px 12px;
   box-shadow: 0 2px 12px var(--shadow);
-  overflow-y: auto;
+  /* [改版·分页] 内容改为两页横向分栏，靠 overflow:hidden 裁掉另一页，
+     不再需要 overflow-y:auto（滚动条会跟拖拽翻页打架） */
+  overflow: hidden;
 }
 
-/* [需求] 「累计专注」：瘦身省下的空白填充块（比四宫格更矮一档） */
-.lifetime-head {
-  font-size: 11.5px;
-  color: var(--text-muted);
-  margin-top: 1px;
-}
-
+/* [改版] 「累计专注」三卡（标题已删，直接跟在上面的统计卡后面） */
 .lifetime-cards {
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 7px;
@@ -1008,7 +1162,7 @@ function barPx(count: number): number {
 .lifetime-card {
   background: var(--bg-secondary);
   border-radius: 10px;
-  padding: 6px 9px;
+  padding: 5px 9px;
   text-align: center;
 }
 
@@ -1042,6 +1196,7 @@ function barPx(count: number): number {
 }
 
 .stats-header {
+  flex-shrink: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1073,10 +1228,97 @@ function barPx(count: number): number {
   color: var(--tomato);
 }
 
+/* ===== [改版·分页] 「数据」卡翻页：视口 / 轨道 / 页 / 底部控件 ===== */
+.pager-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  /* pan-y：纵向仍可滚，横向交给拖拽翻页 */
+  touch-action: pan-y;
+  cursor: grab;
+}
+.pager-viewport.grabbing { cursor: grabbing; }
+
+.pager-track {
+  display: flex;
+  height: 100%;
+  transition: transform 0.34s cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform;
+}
+
+.pager-page {
+  flex: 0 0 100%;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  /* [修复] 7px：主页面高度锁定 610px，统计卡内可用高度只有 ~339px，
+     三处间距从 8 收到 7 挤出 3px 给 2×2 统计卡当安全余量 */
+  gap: 7px;
+  min-height: 0;
+  /* 拖拽时不选中文字 */
+  user-select: none;
+}
+
+.pager-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 22px;
+}
+
+/* [需求] 箭头平时隐藏，鼠标移到卡片附近才淡入；隐藏时不可点，避免点到看不见的按钮 */
+.pager-arrow {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.stats-block:hover .pager-arrow:not(:disabled) { opacity: 1; pointer-events: auto; }
+.pager-arrow:hover:not(:disabled) {
+  background: var(--tomato);
+  border-color: var(--tomato);
+  color: #fff;
+}
+.pager-arrow:disabled { opacity: 0; cursor: default; }
+
+.pager-dots { display: flex; gap: 6px; }
+
+.pager-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--border-color);
+  cursor: pointer;
+  transition: all 0.22s ease;
+}
+.pager-dot:hover { background: var(--text-muted); }
+.pager-dot.on { background: var(--tomato); width: 18px; border-radius: 4px; }
+
 .stats-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  /* [修复] 必须写 minmax(0,1fr)：1fr 的 min-height 默认 auto，
+     卡片内容（图标行+大数字+副信息）会撑破容器导致整页溢出 */
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   /* [需求] 瘦身：8 → 6 */
   gap: 6px;
   /* [改版] 拉伸占满统计卡剩余高度（最大化时四宫格随之变高） */
@@ -1095,6 +1337,8 @@ function barPx(count: number): number {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* [改版·分页] 空态提示要盖在图区上，需要定位上下文 */
+  position: relative;
 }
 
 .week-head {
@@ -1121,30 +1365,66 @@ function barPx(count: number): number {
 
 .bars {
   display: flex;
-  gap: 10px;
+  /* [改版·分页] 整页只有这一张图，柱间距放大到 14px */
+  gap: 14px;
   align-items: flex-end;
   flex: 1;
   min-height: 0;
+  /* [改版] 底部留 10px：给 today 的小圆点（.bday::after 在标签下方 8px、直径 4px）留出空间 */
+  padding: 10px 4px 10px;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .bcol {
   flex: 1;
+  min-width: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
 }
 
-.bval {
-  font-size: 10.5px;
-  color: var(--text-muted);
-  line-height: 1;
+/* 柱子的可用高度区（= 整列高度 − 日期标签），today 的底色只铺在这里 */
+.bcol-area {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
 }
+/* [改版] 原来这里给 today 列铺了一层 rgba(231,76,60,.06) 的整列底色，
+   在空数据时看起来就是一块暗红色"阴影"（用户反馈），已删除。
+   "今天"改由下面的日期标签 + 短下划线标记（见 .bcol.today .bday::after） */
+
+/* 数值 + 柱子成组，整组高度 = 占比 → 数值永远紧贴柱顶 */
+.bcol-group {
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+}
+.bcol-group.is-zero { height: auto !important; }
+
+.bval {
+  flex-shrink: 0;
+  margin-bottom: 4px;
+  font-family: 'DM Serif Display', serif;
+  font-size: 16px;
+  line-height: 1.15;
+  color: var(--text-secondary);
+}
+.bcol.today .bval { color: var(--tomato); }
+.bcol-group.is-zero .bval { color: var(--text-muted); opacity: 0.7; margin-bottom: 0; }
 
 .bar2 {
   width: 100%;
-  max-width: 26px;
-  border-radius: 5px 5px 3px 3px;
+  max-width: 28px;
+  flex: 1 1 auto;
+  min-height: 2px;
+  border-radius: 7px 7px 3px 3px;
   background: var(--heatmap-2);
   transition: height 0.3s ease;
 }
@@ -1153,27 +1433,77 @@ function barPx(count: number): number {
   background: var(--tomato);
 }
 
-.bar2.zero {
-  /* [需求] 0 个的日子不画柱子（原来是 heatmap-empty 灰块占位） */
-  background: transparent;
-  border-radius: 2px;
-}
-
 .bday {
-  font-size: 10.5px;
+  flex-shrink: 0;
+  margin-top: 8px;
+  font-size: 12px;
   color: var(--text-muted);
   line-height: 1;
 }
 
+/* [改版] "今天"标记：日期标签变番茄色 + 下方一个小圆点。
+   ⚠️ 原来用 16×2px 的短横线，和「日」字连起来看着像「旦」字（用户反馈）→ 改成圆点。
+   圆点用 ::after 绝对定位，不占布局高度 —— 否则今天那列的柱区会比别的列矮，柱子对不齐 */
 .bcol.today .bday {
   color: var(--tomato);
   font-weight: 600;
+  position: relative;
+}
+.bcol.today .bday::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--tomato);
 }
 
-/* 今日目标小时数 - 卡内区块（不再自带卡片壳） */
+/* [改版·分页] 全 0 空态：原来图区完全空白，分不清"没记录"还是"坏了" */
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  pointer-events: none;
+}
+.chart-empty svg { width: 26px; height: 26px; opacity: 0.5; }
+
+/* [改版·分页] 第 2 页页脚小结：日均 / 最高 / 今日 */
+.chart-foot {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.foot-item {
+  background: var(--bg-secondary);
+  border-radius: 9px;
+  padding: 5px 9px;
+  text-align: center;
+}
+.foot-item b {
+  display: block;
+  font-family: 'DM Serif Display', serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.2;
+}
+.foot-item span { font-size: 11px; color: var(--text-muted); }
+
+/* 今日目标小时数 - 卡内区块（第 1 页的视觉主角：大号数字 + 粗进度条 + 副信息）
+   [改版] 「累计专注」标题删除后，省下的 23px 大部分补给这块与下面的统计卡 */
 .hour-goal-bar {
-  padding: 9px 12px;
-  border-radius: 10px;
+  flex-shrink: 0;
+  padding: 11px 14px;
+  border-radius: 12px;
   background: var(--bg-secondary);
   transition: all 0.3s ease;
 }
@@ -1185,14 +1515,14 @@ function barPx(count: number): number {
 .goal-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
+  gap: 12px;
+  margin-bottom: 0;
 }
 
 .goal-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 9px;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
   background: linear-gradient(135deg, rgba(231, 76, 60, 0.2) 0%, rgba(192, 57, 43, 0.15) 100%);
   color: var(--tomato);
   display: flex;
@@ -1215,16 +1545,16 @@ function barPx(count: number): number {
   font-family: 'DM Sans', sans-serif;
   font-size: 12px;
   color: var(--text-muted);
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 
 .goal-value {
   font-family: 'DM Serif Display', serif;
-  font-size: 18px;
+  font-size: 26px;
   display: flex;
   align-items: baseline;
   gap: 2px;
-  line-height: 1.1;
+  line-height: 1.05;
 }
 
 .goal-value .current {
@@ -1238,30 +1568,35 @@ function barPx(count: number): number {
 
 .goal-value .separator {
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 16px;
   margin: 0 2px;
 }
 
 .goal-value .target {
   color: var(--text-primary);
+  font-size: 16px;
 }
 
 .goal-value .unit {
   font-family: 'DM Sans', sans-serif;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-muted);
   margin-left: 4px;
 }
 
 .goal-percent {
-  font-family: 'DM Sans', sans-serif;
-  font-size: 13px;
-  font-weight: 600;
+  font-family: 'DM Serif Display', serif;
+  font-size: 19px;
   color: var(--tomato);
   background: rgba(231, 76, 60, 0.12);
-  padding: 4px 10px;
-  border-radius: 8px;
+  padding: 5px 12px;
+  border-radius: 10px;
   flex-shrink: 0;
+}
+
+.goal-percent .pct-sign {
+  font-size: 12px;
+  margin-left: 1px;
 }
 
 .hour-goal-bar.completed .goal-percent {
@@ -1270,11 +1605,23 @@ function barPx(count: number): number {
 }
 
 .goal-progress {
-  height: 6px;
-  background: var(--bg-secondary);
-  border-radius: 3px;
+  height: 9px;
+  margin-top: 9px;
+  background: var(--border-color);
+  border-radius: 5px;
   overflow: hidden;
   position: relative;
+}
+
+/* [改版·分页] 今日目标副信息：还差 X 小时 / 已达成 */
+.goal-sub {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.goal-sub b {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .goal-progress-fill {
@@ -1580,35 +1927,61 @@ function barPx(count: number): number {
 .stat-card {
   background: var(--bg-secondary);
   border-radius: 10px;
-  /* [需求] 瘦身：8/10 → 6/9 */
-  padding: 6px 9px;
+  /* [改版·分页] 紧凑结构：图标+标签一行 / 大数字 / 副信息 */
+  padding: 6px 10px;
   text-align: left;
   transition: background 0.2s ease;
-  /* [改版] 单元格拉高后内容垂直居中 */
   display: flex;
   flex-direction: column;
   justify-content: center;
+  gap: 1px;
+  /* [修复] 允许被压缩，否则内容超一点就撑破 grid 行、整页溢出 */
+  min-height: 0;
+  overflow: hidden;
 }
 
 .stat-card:hover {
   background: var(--border-color);
 }
 
-.stat-icon {
-  display: none;
+/* [改版·分页] 图标与标签并成一行，把纵向空间让给大数字与副信息 */
+.stat-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
+
+.stat-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.stat-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.stat-icon.focus     { background: rgba(231, 76, 60, 0.14);  color: var(--tomato); }
+.stat-icon.completed { background: rgba(46, 204, 113, 0.14); color: #2ecc71; }
+.stat-icon.streak    { background: rgba(255, 152, 0, 0.14);  color: #ff9800; }
+.stat-icon.yesterday { background: rgba(52, 152, 219, 0.14); color: #3498db; }
 
 .stat-value {
   font-family: 'DM Serif Display', serif;
-  font-size: 20px;
+  font-size: 23px;
   font-weight: 400;
   color: var(--text-primary);
-  line-height: 1.1;
+  line-height: 1.05;
 }
 
 .stat-unit {
   font-family: 'DM Sans', sans-serif;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 400;
   color: var(--text-muted);
   margin-left: 2px;
@@ -1616,9 +1989,16 @@ function barPx(count: number): number {
 
 .stat-label {
   font-family: 'DM Sans', sans-serif;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-muted);
-  margin-top: 3px;
+  margin-top: 0;
+}
+
+/* [改版·分页] 统计卡副信息：≈小时 / 完成率 / 最高纪录 / ≈番茄数（都是页面上别处看不到的上下文） */
+.stat-sub {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  opacity: 0.75;
 }
 
 /* 热力图 - 底部整条（卡片壳在 .heatmap-block 上） */
