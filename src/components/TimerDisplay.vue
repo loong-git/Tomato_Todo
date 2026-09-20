@@ -60,7 +60,8 @@ const progressColor = computed(() => {
 
 .accent-bar {
   width: 5px;
-  height: 50px;
+  /* [需求] 跟随倒计时字号回调：50 → 56px */
+  height: 56px;
   border-radius: 3px;
   transition: background 0.3s ease;
 }
@@ -72,8 +73,8 @@ const progressColor = computed(() => {
 }
 
 .big-time {
-  /* [需求] 瘦身：48 → 34px，让计时卡在默认窗口下矮 14px */
-  font-size: 34px;
+  /* [需求] 瘦身 34px 后用户反馈数字太小，回调到 40px（多出的 ~7px 缺口交给热力条 sticky 吸附兜底） */
+  font-size: 40px;
   font-weight: 650;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
