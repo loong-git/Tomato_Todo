@@ -187,15 +187,15 @@ function formatTime(seconds: number): string {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
-// [改版] 窗口基准：宽 1056、高 720（物理像素，按内容实测贴合无空底），按显示器缩放换算成 DIP
+// [改版] 窗口基准：宽 1056、高 820（物理像素，按内容实测贴合无空底），按显示器缩放换算成 DIP
 let MIN_WIN_W = 1056
-let WIN_H = 720
+let WIN_H = 820
 
 function initWindowSize() {
   const { screen } = require('electron')
   const sf = screen.getPrimaryDisplay().scaleFactor || 1
   MIN_WIN_W = Math.round(1056 / sf)
-  WIN_H = Math.round(720 / sf)
+  WIN_H = Math.round(820 / sf)
   fileLog(`[Window] initWindowSize: sf=${sf} MIN_WIN_W=${MIN_WIN_W} WIN_H=${WIN_H} display=${JSON.stringify(screen.getPrimaryDisplay().bounds)}`)
 }
 
