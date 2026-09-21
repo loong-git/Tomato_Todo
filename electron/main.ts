@@ -142,18 +142,36 @@ function createTray() {
 }
 
 // 更新托盘菜单
-function updateTrayMenu(timerState?: { timeLeft?: number; isRunning?: boolean }) {
+function updateTrayMenu(timerState?: { timeLeft?: number; isRunning?: boolean; total?: number }) {
   if (!tray) return
 
-  const timeStr = timerState?.timeLeft !== undefined
-    ? formatTime(timerState.timeLeft)
-    : formatTime(sharedTimerState.timeLeft)
+  const timeLeft = timerState?.timeLeft ?? sharedTimerState.timeLeft
+  const isRunning = timerState?.isRunning ?? sharedTimerState.isRunning
+  const total = timerState?.total ?? sharedTimerState.total
 
-  const statusStr = timerState?.isRunning ? '运行中' : '已暂停'
+  const timeStr = formatTime(timeLeft)
+
+  // [需求] 菜单里那行统一成「开始 / 继续 / 暂停」，并且做成可点击的动作项。
+  // 文案描述的是"点下去会发生什么"，所以不能写成「状态: 暂停」——运行中那样写会误导。
+  // 判据与渲染侧 store.primaryLabel 保持一致：剩余 === 总时长 ⇒ 这一轮还没跑过
+  const actionLabel = isRunning ? '暂停' : (timeLeft === total ? '开始' : '继续')
+
+  // 悬停提示是"状态读数"不是动作，所以用状态词（顺带补上原来缺的「未开始」）
+  const statusStr = isRunning ? '运行中' : (timeLeft === total ? '未开始' : '已暂停')
 
   const contextMenu = Menu.buildFromTemplate([
     { label: `🍅 番茄TODO - ${timeStr}`, enabled: false },
-    { label: `状态: ${statusStr}`, enabled: false },
+    {
+      label: actionLabel,
+      click: () => {
+        console.log(`[Tray] 菜单 - ${actionLabel}`)
+        // 复用 preload 里已声明但一直没用的 tray:toggleTimer 通道；
+        // 渲染侧收到后自己判断 start 还是 pause（与按钮同一套判据）
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('tray:toggleTimer')
+        }
+      }
+    },
     { type: 'separator' },
     {
       label: '显示窗口',
@@ -434,10 +452,12 @@ ipcMain.on('window:bringToFront', () => {
 })
 
 // 托盘状态更新
-ipcMain.on('tray:updateState', (_, data: { timeLeft: number; isRunning: boolean }) => {
+ipcMain.on('tray:updateState', (_, data: { timeLeft: number; isRunning: boolean; total?: number }) => {
   console.log('[Tray] 更新状态:', data)
   sharedTimerState.timeLeft = data.timeLeft
   sharedTimerState.isRunning = data.isRunning
+  // [需求] total 用于区分「未开始」和「暂停中」→ 决定托盘菜单那行显示「开始」还是「继续」
+  if (data.total) sharedTimerState.total = data.total
   updateTrayMenu(data)
 })
 

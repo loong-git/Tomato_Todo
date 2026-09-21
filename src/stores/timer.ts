@@ -306,7 +306,9 @@ export const useTimerStore = defineStore('timer', () => {
     })
     window.electronAPI.tray.updateState({
       timeLeft: timeLeft.value,
-      isRunning: isRunning.value
+      isRunning: isRunning.value,
+      // [需求] 托盘菜单那行要区分「未开始(开始)」和「暂停中(继续)」，所以把总时长一起带上
+      total: currentDuration.value
     })
   }
 

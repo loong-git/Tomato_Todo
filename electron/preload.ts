@@ -64,9 +64,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 宽度缩放走 Windows 原生边框，渲染端不需要发目标宽度
   },
   tray: {
-    updateState: (data: { timeLeft: number; isRunning: boolean }) => {
+    updateState: (data: { timeLeft: number; isRunning: boolean; total: number }) => {
       ipcRenderer.send('tray:updateState', data)
     },
+    // 托盘菜单那行（开始 / 继续 / 暂停）被点击 → 主进程发这个事件，渲染侧自己判断 start/pause
     onToggleTimer: (callback: () => void) => {
       ipcRenderer.on('tray:toggleTimer', () => callback())
     }

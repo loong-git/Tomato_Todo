@@ -157,6 +157,12 @@ onMounted(async () => {
       else if (action === 'start') timerStore.start()
       else if (action === 'skip') timerStore.skip()
     })
+    // [需求] 托盘菜单那行（开始 / 继续 / 暂停）被点击 → 与主按钮同一套判断：
+    // 运行中就暂停，否则启动（start() 在暂停状态下就是继续）
+    window.electronAPI.tray.onToggleTimer(() => {
+      if (timerStore.isRunning) timerStore.pause()
+      else timerStore.start()
+    })
     // [需求] 最大化状态回传：驱动 ▢ 按钮 最大化/向下还原 图标切换
     window.electronAPI.window.onMaxState((v) => {
       isCustomMax.value = v
@@ -171,7 +177,8 @@ onMounted(async () => {
   if (window.electronAPI) {
     window.electronAPI.tray.updateState({
       timeLeft: timerStore.timeLeft,
-      isRunning: timerStore.isRunning
+      isRunning: timerStore.isRunning,
+      total: timerStore.currentDuration
     })
     console.log('[App] 托盘状态已初始化')
   }

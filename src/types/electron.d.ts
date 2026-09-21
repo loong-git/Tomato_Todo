@@ -48,7 +48,7 @@ interface ElectronAPI {
     // 宽度缩放走 Windows 原生边框（minWidth/maxWidth 约束 + 高度 min=max 锁死）
   }
   tray: {
-    updateState: (data: { timeLeft: number; isRunning: boolean }) => void
+    updateState: (data: { timeLeft: number; isRunning: boolean; total: number }) => void
     onToggleTimer: (callback: () => void) => void
   }
 }
