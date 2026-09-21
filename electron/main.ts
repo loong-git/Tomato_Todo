@@ -841,14 +841,6 @@ ipcMain.handle('focus:getInitData', () => {
   }
 })
 
-// [修复] 原来 `sharedTimerState = data` 是整对象替换，而这个 payload 只带 3 个字段 →
-// 会把 total / currentTaskName / currentTaskIds / justCompleted 全清掉，且类型报错。
-// 改成合并：只覆盖传来的字段。参数标成 Partial，允许任意子集。
-// 注：这个通道目前**没有任何调用点**（preload 没暴露、全仓无引用），保留是备用。
-ipcMain.handle('focus:updateState', (_, data: Partial<typeof sharedTimerState>) => {
-  sharedTimerState = { ...sharedTimerState, ...data }
-})
-
 ipcMain.on('focus:getState', (event) => {
   // focusWindow 请求获取当前状态，直接从 sharedTimerState 返回
   event.returnValue = sharedTimerState
