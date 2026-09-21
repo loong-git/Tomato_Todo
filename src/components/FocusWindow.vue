@@ -201,7 +201,11 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  /* [修复] 原 12px。小窗固定 224x222 物理，在 152.5% 缩放屏上只有 ≈147x146 DIP，
+     而内容按设计稿 240x240 的尺寸做 → 内容高约 151 DIP 超出窗口约 6 DIP，
+     justify-content:center 把超出部分均分到上下两端 → 任务名贴顶边、播放按钮底部被切平。
+     内容整体缩到 ≈130 DIP，上下各留 8 DIP */
+  gap: 8px;
   background: var(--w-bg);
   border-radius: 16px;
   position: relative;
@@ -241,10 +245,17 @@ onUnmounted(() => {
   border-radius: 6px;
   cursor: pointer;
   -webkit-app-region: no-drag;
+  transition: opacity 0.18s ease, color 0.2s ease, background 0.2s ease;
 }
 .w-close:hover {
   color: #e74c3c;
   background: rgba(231, 76, 60, 0.1);
+}
+/* [需求] 锁定后隐藏 ✕：锁定的语义是"别来动这个窗口"，关闭按钮一并收起。
+   用 opacity + pointer-events 而不是 display:none，这样能有个淡出过渡 */
+.focus-window.is-locked .w-close {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* [需求] 锁定按钮：左上角，与右上角 ✕ 对称 */
@@ -277,16 +288,20 @@ onUnmounted(() => {
 }
 
 .w-task {
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 1.3;
   color: var(--w-muted);
-  max-width: 200px;
+  /* [修复] 原 max-width:200px，但窗口只有 147 DIP 宽 → 等于不限制，
+     长任务名会压到左右两侧的挂锁/✕ 图标上。收到 76px（两图标之间的可用宽度） */
+  max-width: 76px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .w-time {
-  font-size: 56px;
+  /* [修复] 56 → 48：56 是照 240x240 的设计稿定的，在 146 DIP 高的窗口里装不下 */
+  font-size: 48px;
   font-weight: 800;
   color: var(--w-fg);
   font-variant-numeric: tabular-nums;
@@ -303,9 +318,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: 10.5px;
+  line-height: 1.3;
   color: var(--w-muted);
-  margin-top: -6px;
+  /* [修复] -6 → -7：与上一行大数字的视觉间距再收一点，给底部按钮腾高度 */
+  margin-top: -7px;
 }
 .w-dot {
   width: 6px;
@@ -318,8 +335,9 @@ onUnmounted(() => {
   gap: 10px;
 }
 .wbtn {
-  width: 40px;
-  height: 40px;
+  /* [修复] 40 → 36：同上，40 是照设计稿定的，在这个窗口高度里会把内容顶出边界 */
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   border: 1px solid var(--w-btn-border);
   background: var(--w-btn-bg);
