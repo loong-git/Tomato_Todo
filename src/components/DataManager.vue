@@ -255,7 +255,10 @@ function toggle() {
 }
 
 .action-btn:hover {
-  background: var(--bg-hover);
+  /* [修复] 原为 var(--bg-hover)，但这个变量全项目从未定义过 →
+     background 整条声明失效，hover 时只有边框变色、底色不动。
+     改用 --border-color，与 .stat-card:hover 的写法保持一致 */
+  background: var(--border-color);
   border-color: var(--tomato);
 }
 

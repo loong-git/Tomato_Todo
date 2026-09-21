@@ -618,7 +618,10 @@ main {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--bg-secondary);
+  /* [修复] 原来是 var(--bg-secondary)。浅色主题下 --bg-secondary 已改成暖调浅灰(#f4f0ec)，
+     而本按钮所在的 .focus-inline 浮层底色是 --bg-primary(#f5f2ef) → 两者撞色按钮会"消失"。
+     改用 --bg-card：浅色下是白、深色下与原来的 --bg-secondary 几乎一致，两种主题都能浮起来 */
+  background: var(--bg-card);
   color: var(--text-primary);
   border: 1px solid var(--border-color);
   border-radius: 999px;
@@ -697,7 +700,12 @@ main {
 
 [data-theme="light"] {
   --bg-primary: #f5f2ef;
-  --bg-secondary: #ffffff;
+  /* [修复] 原为 #ffffff，与卡片底色 rgba(255,255,255,.98) 几乎同色 →
+     浅色主题下所有"卡内分区"（统计卡 / 累计卡 / 今日目标块 / 模式 tab / 任务卡 / 按钮等
+     23 处都用这个变量）完全看不出边界，整个卡片糊成一坨。
+     深色主题的 --bg-secondary(#2d2522) 相对卡片底色是"略亮"所以能看出分区；
+     浅色这边改成暖调浅灰，在白卡上形成清晰但克制的分区，与 --bg-primary 同色系 */
+  --bg-secondary: #f4f0ec;
   --bg-card: rgba(255, 255, 255, 0.98);
   --text-primary: #1a1512;
   --text-secondary: #5c524a;
