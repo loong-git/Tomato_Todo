@@ -669,7 +669,10 @@ async function openFocusWindow(mode: 'compact', data?: { timeLeft: number; mode:
     fileLog('[Focus] openFocusWindow 失败: mainWindow 不可用')
     return
   }
-  if (data) sharedTimerState = data
+  // [修复] 原来 `sharedTimerState = data` 会把整个对象替换成 focus:open 传来的子集
+  // （payload 不含 justCompleted）→ 类型报错，且会静默丢掉 justCompleted。
+  // 改成合并：只覆盖传来的字段，其余沿用当前值
+  if (data) sharedTimerState = { ...sharedTimerState, ...data }
   fileLog(`[Focus] openFocusWindow 入口 → data.timeLeft=${data?.timeLeft} data.isRunning=${data?.isRunning} mode=${mode} sharedTimerState.timeLeft=${sharedTimerState.timeLeft}`)
 
   pendingFocusOpen = true
@@ -838,8 +841,12 @@ ipcMain.handle('focus:getInitData', () => {
   }
 })
 
-ipcMain.handle('focus:updateState', (_, data: { timeLeft: number; mode: string; isRunning: boolean }) => {
-  sharedTimerState = data
+// [修复] 原来 `sharedTimerState = data` 是整对象替换，而这个 payload 只带 3 个字段 →
+// 会把 total / currentTaskName / currentTaskIds / justCompleted 全清掉，且类型报错。
+// 改成合并：只覆盖传来的字段。参数标成 Partial，允许任意子集。
+// 注：这个通道目前**没有任何调用点**（preload 没暴露、全仓无引用），保留是备用。
+ipcMain.handle('focus:updateState', (_, data: Partial<typeof sharedTimerState>) => {
+  sharedTimerState = { ...sharedTimerState, ...data }
 })
 
 ipcMain.on('focus:getState', (event) => {
