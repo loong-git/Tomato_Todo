@@ -191,6 +191,15 @@ export const useTimerStore = defineStore('timer', () => {
     }
   })
 
+  // [需求] 主按钮文案，三处共用（沉浸模式 / 计时卡 / 专注小窗），避免各写一套判据：
+  //   运行中            → 暂停
+  //   剩余 === 总时长   → 这一轮还没跑过 → 开始
+  //   其余（中途停下）  → 继续
+  const primaryLabel = computed(() => {
+    if (isRunning.value) return '暂停'
+    return timeLeft.value === currentDuration.value ? '开始' : '继续'
+  })
+
   async function playSound() {
     if (!settingsStore.settings.soundEnabled) return
 
@@ -480,6 +489,7 @@ export const useTimerStore = defineStore('timer', () => {
     playSound,
     formattedTime,
     currentDuration,
+    primaryLabel,
     loadStreakData,
     recomputeStreakFromRecords,
     start,

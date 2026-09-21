@@ -424,7 +424,7 @@ async function openFocusMode(mode: 'compact') {
       <div class="fi-btns">
         <button
           class="fbtn primary"
-          :title="timerStore.isRunning ? '暂停 (Space)' : '继续 (Space)'"
+          :title="`${timerStore.primaryLabel} (Space)`"
           @click="timerStore.isRunning ? timerStore.pause() : timerStore.start()"
         >
           <svg v-if="timerStore.isRunning" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
@@ -433,7 +433,9 @@ async function openFocusMode(mode: 'compact') {
           <svg v-else viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
             <path d="M8 5.5v13a.7.7 0 0 0 1.07.6l10-6.5a.7.7 0 0 0 0-1.2l-10-6.5A.7.7 0 0 0 8 5.5z"/>
           </svg>
-          {{ timerStore.isRunning ? '暂停' : '继续' }}
+          <!-- [修复] 原为 isRunning ? '暂停' : '继续' —— 番茄还没开始时也显示「继续」。
+               改用 store 的 primaryLabel：未开始=开始 / 中途暂停=继续 / 运行中=暂停 -->
+          {{ timerStore.primaryLabel }}
         </button>
         <button class="fbtn" title="退出沉浸模式 (Esc)" @click="inlineFocus = false">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">

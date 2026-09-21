@@ -12,6 +12,9 @@ const shortcuts = ref<ShortcutConfig>({
 })
 
 const timeLeft = ref(25 * 60)
+// [需求] 本模式总时长，由主窗口经 IPC 同步（sendState / getInitData 都带 total）。
+// 用来判断"这一轮还没开始过"——小窗是独立进程，拿不到主窗口的 timer store
+const total = ref(25 * 60)
 const mode = ref('focus')
 const showComplete = ref(false)
 const isRunning = ref(false)
@@ -33,6 +36,13 @@ const formattedTime = computed(() => {
   const mins = Math.floor(timeLeft.value / 60)
   const secs = timeLeft.value % 60
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+})
+
+// [需求] 按钮提示文案，判据与主窗口 store.primaryLabel 保持一致：
+// 运行中 → 暂停 / 剩余 === 总时长（还没开始）→ 开始 / 其余（中途停下）→ 继续
+const primaryLabel = computed(() => {
+  if (isRunning.value) return '暂停'
+  return timeLeft.value === total.value ? '开始' : '继续'
 })
 
 async function closeFocus() {
@@ -104,6 +114,7 @@ onMounted(async () => {
       timeLeft.value = data.timeLeft
       mode.value = data.mode
       isRunning.value = data.isRunning
+      if (data.total) total.value = data.total
       isLastMinute.value = data.timeLeft <= 60 && data.timeLeft > 0
       if (data.currentTaskName !== undefined) {
         currentTaskName.value = data.currentTaskName
@@ -121,6 +132,7 @@ onMounted(async () => {
     timeLeft.value = initData.timeLeft
     mode.value = initData.mode
     isRunning.value = initData.isRunning
+    if (initData.total) total.value = initData.total
     isLastMinute.value = initData.timeLeft <= 60 && initData.timeLeft > 0
     if (initData.currentTaskName !== undefined) {
       currentTaskName.value = initData.currentTaskName
@@ -170,7 +182,7 @@ onUnmounted(() => {
       </div>
 
       <div class="w-btns">
-        <button class="wbtn primary" :title="isRunning ? '暂停' : '继续'" @click="toggleRun">
+        <button class="wbtn primary" :title="primaryLabel" @click="toggleRun">
           <svg v-if="isRunning" viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
             <rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>
           </svg>

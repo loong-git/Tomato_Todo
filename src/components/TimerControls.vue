@@ -29,7 +29,7 @@ function toggleTimer() {
         class="control-btn primary"
         :class="{ running: timerStore.isRunning }"
         @click="toggleTimer"
-        :title="timerStore.isRunning ? '暂停 (Space)' : '开始 (Space)'"
+        :title="`${timerStore.primaryLabel} (Space)`"
       >
         <svg v-if="!timerStore.isRunning" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
           <path d="M8 5v14l11-7z"/>
@@ -37,7 +37,9 @@ function toggleTimer() {
         <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
           <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
         </svg>
-        <span>{{ timerStore.isRunning ? '暂停' : '开始' }}</span>
+        <!-- [修复] 原为 isRunning ? '暂停' : '开始' —— 中途暂停后也显示「开始」。
+             改用 store 的 primaryLabel：未开始=开始 / 中途暂停=继续 / 运行中=暂停 -->
+        <span>{{ timerStore.primaryLabel }}</span>
       </button>
 
       <button class="control-btn ghost" @click="timerStore.skip" title="跳过">
