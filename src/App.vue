@@ -157,12 +157,7 @@ onMounted(async () => {
       else if (action === 'start') timerStore.start()
       else if (action === 'skip') timerStore.skip()
     })
-    // [需求] 托盘菜单那行（开始 / 继续 / 暂停）被点击 → 与主按钮同一套判断：
-    // 运行中就暂停，否则启动（start() 在暂停状态下就是继续）
-    window.electronAPI.tray.onToggleTimer(() => {
-      if (timerStore.isRunning) timerStore.pause()
-      else timerStore.start()
-    })
+    // 注：托盘「开始/继续/暂停」的处理在下方 setup 作用域里（onToggleTimer），不要在这里重复注册
     // [需求] 最大化状态回传：驱动 ▢ 按钮 最大化/向下还原 图标切换
     window.electronAPI.window.onMaxState((v) => {
       isCustomMax.value = v
@@ -218,6 +213,8 @@ watch(() => timerStore.pomodoroCount, (newCount, oldCount) => {
 // 见 src/stores/timer.ts: emitStateChange() 函数
 
 // 监听托盘切换计时器
+// ⚠️ 这里是**唯一**的注册点（不要在别处再注册一次）：
+// preload 的 onSingle 会在注册前清掉同通道旧监听，但同一份代码里注册两次仍会触发两次
 if (window.electronAPI) {
   window.electronAPI.tray.onToggleTimer(() => {
     console.log('[App] 收到托盘切换计时器')
