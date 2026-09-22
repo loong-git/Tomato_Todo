@@ -40,6 +40,8 @@ export interface Settings {
   closeBehavior: 'tray' | 'quit'
   /** 自定义快捷键(人类可读,如 "Alt+F" / "Ctrl+Shift+M") */
   shortcuts: ShortcutConfig
+  /** [新手引导] 是否已经看过引导（false/undefined 时首次启动自动弹一次） */
+  hasSeenOnboarding: boolean
 }
 
 export type TimerMode = 'focus' | 'shortBreak' | 'longBreak'

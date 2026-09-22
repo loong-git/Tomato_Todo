@@ -3,6 +3,7 @@ import { ref, onMounted, watch, computed, onUnmounted } from 'vue'
 import { useTimerStore, useTaskStore, useSettingsStore, useStatsStore } from '@/stores'
 import { matchShortcut } from '@/utils'
 import { isShortcutRecording } from '@/utils/shortcut-state'
+import { tourVisible, openTour } from '@/utils/onboarding-state'
 import TimerDisplay from '@/components/TimerDisplay.vue'
 import TimerControls from '@/components/TimerControls.vue'
 import ModeSelector from '@/components/ModeSelector.vue'
@@ -12,6 +13,7 @@ import SettingsPanel from '@/components/SettingsPanel.vue'
 import FocusWindow from '@/components/FocusWindow.vue'
 import CelebrationOverlay from '@/components/CelebrationOverlay.vue'
 import AppToast from '@/components/AppToast.vue'
+import OnboardingTour from '@/components/OnboardingTour.vue'
 
 const timerStore = useTimerStore()
 const taskStore = useTaskStore()
@@ -145,6 +147,14 @@ onMounted(async () => {
 
   // 确保主题是最新的（可能默认值与保存的值不同）
   document.documentElement.setAttribute('data-theme', settingsStore.settings.theme)
+
+  // [新手引导] 首次启动自动弹一次；看过之后 hasSeenOnboarding 落 true，之后不再弹
+  // （设置里还有「重看新手引导」入口）
+  // 延迟 600ms 的原因：引导靠 getBoundingClientRect 量各区域位置，要等首屏排版稳定。
+  // 上面几个 loadXxx() 已经 await 过，数据都在 DOM 里了，600ms 是留一点渲染余量
+  if (!settingsStore.settings.hasSeenOnboarding) {
+    setTimeout(() => openTour(), 600)
+  }
 
   // 监听主进程通知进入/退出专注模式
   if (window.electronAPI) {
@@ -398,7 +408,8 @@ async function openFocusMode(mode: 'compact') {
     <main @scroll.passive="onMainScroll">
       <div class="content">
         <section class="timer-area">
-          <div class="timer-card">
+          <!-- [新手引导] data-tour 是聚光灯引导的锚点，比用 class 选择器稳（重构 class 不会断） -->
+          <div class="timer-card" data-tour="timer">
             <TimerDisplay />
             <div class="timer-meta">
               <ModeSelector />
@@ -453,6 +464,8 @@ async function openFocusMode(mode: 'compact') {
   </div>
   <CelebrationOverlay />
   <AppToast />
+  <!-- [新手引导] 聚光灯分步引导：首次启动自动弹，也可从设置里重看 -->
+  <OnboardingTour v-if="tourVisible" />
 </template>
 
 <style scoped>

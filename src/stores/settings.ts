@@ -18,7 +18,8 @@ const defaultSettings: Settings = {
   shortcuts: {
     toggleFullscreen: 'Alt+F',
     toggleCompact: 'Alt+M'
-  }
+  },
+  hasSeenOnboarding: false
 }
 
 const SOUND_TYPES: SoundType[] = ['bell', 'forest', 'ding', 'tick', 'custom']
@@ -42,7 +43,10 @@ function sanitizeSettings(saved: Partial<Settings>): Settings {
     closeBehavior: saved.closeBehavior === 'tray' || saved.closeBehavior === 'quit' ? saved.closeBehavior : defaultSettings.closeBehavior,
     shortcuts: saved.shortcuts && typeof saved.shortcuts === 'object' && typeof saved.shortcuts.toggleFullscreen === 'string' && typeof saved.shortcuts.toggleCompact === 'string'
       ? { toggleFullscreen: saved.shortcuts.toggleFullscreen, toggleCompact: saved.shortcuts.toggleCompact }
-      : defaultSettings.shortcuts
+      : defaultSettings.shortcuts,
+    // [新手引导] 老版本数据里没这个字段 → undefined。这里兜成 false 而不是原样带过去，
+    // 否则判断 `!settings.hasSeenOnboarding` 虽然也能成立，但类型上是 undefined 不合规
+    hasSeenOnboarding: typeof saved.hasSeenOnboarding === 'boolean' ? saved.hasSeenOnboarding : defaultSettings.hasSeenOnboarding
   }
 }
 

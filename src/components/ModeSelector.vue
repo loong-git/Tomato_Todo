@@ -54,7 +54,7 @@ function confirmSwitch() {
 
 <template>
   <div class="mode-selector">
-    <div class="mode-tabs">
+    <div class="mode-tabs" data-tour="mode">
       <button
         v-for="m in modes"
         :key="m.key"

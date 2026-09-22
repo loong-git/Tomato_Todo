@@ -639,7 +639,7 @@ const goalRemainHours = computed(() =>
 <template>
   <!-- [改版] display:contents：.stats-block 落网格 stats 区，.heatmap-block 落 heat 区 -->
   <div class="stats-display">
-    <div class="stats-block">
+    <div class="stats-block" data-tour="stats">
     <div class="stats-header">
       <h3 class="block-title">数据</h3>
       <div class="header-actions">
@@ -1003,7 +1003,7 @@ const goalRemainHours = computed(() =>
     </div>
 
     <!-- 热力图（底部整条）：单行热力条 + 完整日历弹窗 -->
-    <div class="heatmap-block">
+    <div class="heatmap-block" data-tour="heatmap">
     <div class="heatmap-container">
       <!-- 单行热力条：标题左 / 格子中 / 汇总+入口右，一行对齐 -->
       <div class="heat-strip">

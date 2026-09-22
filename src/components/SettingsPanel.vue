@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/stores'
 import type { SoundType, ShortcutConfig } from '@/types'
 import { eventToShortcut, parseShortcut } from '@/utils'
 import { setShortcutRecording } from '@/utils/shortcut-state'
+import { openTour } from '@/utils/onboarding-state'
 import { toast } from '@/utils/toast'
 
 const settingsStore = useSettingsStore()
@@ -143,6 +144,16 @@ function reset() {
 
 function close() {
   visible.value = false
+}
+
+/**
+ * [新手引导] 重看引导。
+ * 必须先关掉设置面板——引导是"聚光灯高亮界面各区域"，面板盖在上面会把高亮区挡掉。
+ * 关闭不会丢用户改动：面板每次 open() 都会从 store 重新同步 localSettings。
+ */
+function replayTour() {
+  close()
+  openTour()
 }
 
 function selectPreset(preset: SoundType) {
@@ -424,6 +435,14 @@ defineExpose({ open, close })
                 退出程序
               </button>
             </div>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label">
+              <span class="label-text">新手引导</span>
+              <span class="label-hint">重新走一遍各功能区的介绍</span>
+            </div>
+            <button class="action-btn small" @click="replayTour">重看引导</button>
           </div>
         </div>
 
@@ -1104,6 +1123,14 @@ defineExpose({ open, close })
 .action-btn.primary:hover {
   transform: translateY(-1px);
   box-shadow: 0 6px 20px rgba(231, 76, 60, 0.4);
+}
+
+/* [新手引导] 行内小按钮（setting-item 里用，比 footer 的按钮小一号） */
+.action-btn.small {
+  padding: 6px 14px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 
 .action-btn:active {

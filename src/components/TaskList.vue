@@ -176,7 +176,7 @@ function deleteArchivedTask(taskId: string) {
 </script>
 
 <template>
-  <div class="task-list">
+  <div class="task-list" data-tour="tasks">
     <!-- 番茄 icon 公共渐变（icon.svg 同源形象；同文档 defs 全局引用，避免 v-for 重复 id） -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
       <defs>
