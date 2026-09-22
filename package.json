@@ -5,13 +5,13 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "chcp 65001 >nul & vite",
-    "build:zip": "vue-tsc --noEmit && vite build && electron-builder --win zip && node scripts/clean-release.js",
-    "build:portable": "vue-tsc --noEmit && vite build && electron-builder --win portable && node scripts/clean-release.js",
-    "build:all": "vue-tsc --noEmit && vite build && electron-builder --win && node scripts/clean-release.js",
+    "build:zip": "vue-tsc --noEmit && vite build && electron-builder --win zip && node build/clean-release.js",
+    "build:portable": "vue-tsc --noEmit && vite build && electron-builder --win portable && node build/clean-release.js",
+    "build:all": "vue-tsc --noEmit && vite build && electron-builder --win && node build/clean-release.js",
     "build:vite": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "electron:dev": "chcp 65001 >nul & vite",
-    "postinstall": "node scripts/patch-app-builder.js"
+    "postinstall": "node build/patch-app-builder.js"
   },
   "dependencies": {
     "@vueuse/core": "^10.9.0",
@@ -37,7 +37,7 @@
     "appId": "com.tomato.todo",
     "productName": "番茄TODO时钟",
     "icon": "build/icon.ico",
-    "afterPack": "scripts/after-pack.js",
+    "afterPack": "build/after-pack.js",
     "directories": {
       "output": "release",
       "buildResources": "build"

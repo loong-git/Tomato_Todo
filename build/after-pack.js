@@ -15,7 +15,7 @@ module.exports = async function (context) {
   // context.appOutDir = release\win-unpacked
   const exeName = context.packager.appInfo.productFilename + '.exe'
   const exePath = path.join(context.appOutDir, exeName)
-  const icoPath = path.join(__dirname, '..', 'build', 'icon.ico')
+  const icoPath = path.join(__dirname, 'icon.ico')
 
   console.log('[after-pack] setting icon:')
   console.log('  ico:', icoPath)

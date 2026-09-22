@@ -11,7 +11,7 @@
  *
  * 临时方案:在 doSign 入口加 null check,无证书时 warn + return false 跳过。
  * npm install 会覆盖 node_modules,所以每次 install 后需重新跑这个脚本:
- *   node scripts/patch-app-builder.js
+ *   node build/patch-app-builder.js
  *
  * 已经把 npm postinstall 钩到这个脚本,自动重打。
  */
