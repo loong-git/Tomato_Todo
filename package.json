@@ -2,6 +2,7 @@
   "name": "tomato-todo",
   "version": "2.0.0",
   "description": "番茄TODO时钟 - 基于番茄工作法的时间管理应用",
+  "author": "loong-git",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "chcp 65001 >nul & vite",
