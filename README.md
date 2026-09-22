@@ -33,7 +33,7 @@
 
 ## 下载
 
-到 [Releases](https://github.com/loong-git/TOMATO_TODO/releases) 页面下载最新版本：
+到 [Releases](https://github.com/loong-git/Tomato_Todo/releases) 页面下载最新版本：
 
 | 文件 | 说明 |
 |------|------|
