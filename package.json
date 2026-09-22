@@ -10,6 +10,7 @@
     "build:all": "vue-tsc --noEmit && vite build && electron-builder --win && node build/clean-release.js",
     "build:vite": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
+    "icon": "node generate-icon.js",
     "electron:dev": "chcp 65001 >nul & vite",
     "postinstall": "node build/patch-app-builder.js"
   },

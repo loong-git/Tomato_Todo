@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <!-- 番茄渐变 -->
+    <radialGradient id="tomatoGrad" cx="35%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#ff6b5b"/>
+      <stop offset="100%" stop-color="#e74c3c"/>
+    </radialGradient>
+    <!-- 高光 -->
+    <radialGradient id="highlight" cx="30%" cy="30%" r="30%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.4)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </radialGradient>
+    <!-- 阴影 -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#c0392b" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- 背景圆角方形 -->
+  <rect x="16" y="16" width="224" height="224" rx="40" fill="#1a1614"/>
+
+  <!-- 番茄主体 -->
+  <ellipse cx="128" cy="145" rx="75" ry="70" fill="url(#tomatoGrad)" filter="url(#shadow)"/>
+
+  <!-- 番茄高光 -->
+  <ellipse cx="105" cy="125" rx="30" ry="25" fill="url(#highlight)"/>
+
+  <!-- 番茄萼片/叶子 -->
+  <path d="M128 75 C120 55 100 55 95 65 C90 75 100 85 110 82 C115 78 120 80 128 75" fill="#4a7c59"/>
+  <path d="M128 75 C136 55 156 55 161 65 C166 75 156 85 146 82 C141 78 136 80 128 75" fill="#5a8c69"/>
+  <path d="M128 75 C125 50 135 40 140 50 C145 60 135 75 128 75" fill="#3d6b4a"/>
+  <path d="M128 75 C131 50 121 40 116 50 C111 60 121 75 128 75" fill="#4a7c59"/>
+
+  <!-- 番茄顶部小柄 -->
+  <rect x="123" y="68" width="10" height="12" rx="3" fill="#4a7c59"/>
+
+  <!-- 简约时钟指针 - 暗示番茄工作法 -->
+  <circle cx="128" cy="145" r="45" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3"/>
+  <line x1="128" y1="145" x2="128" y2="115" stroke="rgba(255,255,255,0.6)" stroke-width="4" stroke-linecap="round"/>
+  <line x1="128" y1="145" x2="148" y2="155" stroke="rgba(255,255,255,0.4)" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="128" cy="145" r="5" fill="rgba(255,255,255,0.8)"/>
+</svg>
