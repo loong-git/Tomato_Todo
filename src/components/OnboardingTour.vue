@@ -53,12 +53,17 @@ const steps: Step[] = [
 
 const BUBBLE_W = 300
 const GAP = 12
+/** 气泡与窗口边缘的最小留白 */
+const EDGE = 12
 /** 高亮框比目标元素向外扩一点，看起来更透气 */
 const SPOT_PAD = 6
 
+/** 气泡相对目标的位置。上下都放不下时（目标很高）会退到左右两侧 */
+type Placement = 'below' | 'above' | 'left' | 'right'
+
 const index = ref(0)
 const rect = ref<{ left: number; top: number; width: number; height: number } | null>(null)
-const placement = ref<'below' | 'above'>('below')
+const placement = ref<Placement>('below')
 const bubbleH = ref(150)
 const bubbleRef = ref<HTMLElement | null>(null)
 /** 挂载后补测布局用的定时器，卸载时要清掉 */
@@ -66,6 +71,26 @@ const remeasureTimers: number[] = []
 
 const step = computed(() => steps[index.value])
 const isLast = computed(() => index.value === steps.length - 1)
+
+/**
+ * 选摆放方向。顺序：下方 → 上方 → 右侧 → 左侧。
+ *
+ * 为什么必须有左右：任务卡和数据卡都是**几乎占满中间行**的高目标，
+ * 上下两侧都没有放气泡的空间，只按上下选就会被 clamp 到窗口顶部、反过来压住卡片本身。
+ * 试右侧优先是刻意的——左列目标（任务卡）右侧通常有空间，右列目标（数据卡）右侧
+ * 顶到窗口边、自然落到左侧，正好符合"各自往空的那边让"。
+ */
+function pickPlacement(r: { left: number; top: number; width: number; height: number }): Placement {
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+
+  if (r.top + r.height + GAP + bubbleH.value <= vh - EDGE) return 'below'
+  if (r.top - GAP - bubbleH.value >= EDGE) return 'above'
+  if (r.left + r.width + GAP + BUBBLE_W <= vw - EDGE) return 'right'
+  if (r.left - GAP - BUBBLE_W >= EDGE) return 'left'
+  // 窗口极窄、四面都放不下时的兜底：退回下方，靠下面的 clamp 保证不跑出窗口
+  return 'below'
+}
 
 async function measure() {
   const el = document.querySelector(steps[index.value].target) as HTMLElement | null
@@ -83,10 +108,7 @@ async function measure() {
   // 先让气泡按最终宽度渲染出来，才能量到它的真实高度（高度随文案行数变）
   await nextTick()
   bubbleH.value = bubbleRef.value?.offsetHeight ?? 150
-  // 优先放下方；下方装不下就翻到上方
-  const roomBelow = window.innerHeight - 8
-  placement.value =
-    rect.value.top + rect.value.height + GAP + bubbleH.value <= roomBelow ? 'below' : 'above'
+  placement.value = pickPlacement(rect.value)
 }
 
 const spotlightStyle = computed(() => ({
@@ -98,18 +120,28 @@ const spotlightStyle = computed(() => ({
 
 const bubbleStyle = computed(() => {
   if (!rect.value) return {}
-  // 水平居中于目标，再夹在窗口内，避免贴边溢出
-  let left = rect.value.left + rect.value.width / 2 - BUBBLE_W / 2
-  left = Math.max(12, Math.min(left, window.innerWidth - BUBBLE_W - 12))
-  const top =
-    placement.value === 'below'
-      ? rect.value.top + rect.value.height + GAP
-      : rect.value.top - GAP - bubbleH.value
-  return {
-    left: left + 'px',
-    top: Math.max(8, top) + 'px',
-    width: BUBBLE_W + 'px'
+  const r = rect.value
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  let left: number
+  let top: number
+
+  if (placement.value === 'right') {
+    // 贴目标右侧，垂直居中对齐目标
+    left = r.left + r.width + GAP
+    top = r.top + r.height / 2 - bubbleH.value / 2
+  } else if (placement.value === 'left') {
+    left = r.left - GAP - BUBBLE_W
+    top = r.top + r.height / 2 - bubbleH.value / 2
+  } else {
+    // 水平居中于目标；下方放不下时放上方
+    left = r.left + r.width / 2 - BUBBLE_W / 2
+    top = placement.value === 'below' ? r.top + r.height + GAP : r.top - GAP - bubbleH.value
   }
+
+  left = Math.max(EDGE, Math.min(left, vw - BUBBLE_W - EDGE))
+  top = Math.max(EDGE, Math.min(top, vh - bubbleH.value - EDGE))
+  return { left: left + 'px', top: top + 'px', width: BUBBLE_W + 'px' }
 })
 
 function go(i: number) {
