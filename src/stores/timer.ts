@@ -5,6 +5,7 @@ import { useSettingsStore } from './settings'
 import { useTaskStore } from './task'
 import { useStatsStore } from './stats'
 import { formatDuration } from '@/utils'
+import { sleepShiftMs, SLEEP_GRACE_MS } from '@/utils/timer-clock'
 
 export const useTimerStore = defineStore('timer', () => {
   const settingsStore = useSettingsStore()
@@ -25,7 +26,10 @@ export const useTimerStore = defineStore('timer', () => {
   // [P1-5 修复] 计时基准时间戳：Date.now() - (duration - timeLeft) * 1000
   // 计时改为基于时间戳差值计算剩余秒数，避免 1000ms setInterval + IPC 耗时累计漂移
   let timerStartBaseMs = 0
-  // [Bug1 修复] 上一次 tick 的时刻，用于检测系统睡眠/挂起导致的时钟跳变
+  // [睡眠补偿统一] 上一次 tick 的时刻：睡眠补偿的全项目唯一账本。
+  // tick 循环与 power:resumed 唤醒回调都通过 sleepShiftMs 读它做补偿判定 ——
+  // 先到者补偿后更新它，后到者的 gap 只剩几十 ms 自然跳过，一次睡眠只补偿一次
+  // （v2.0.0 两处各补一次 → 剩余时间虚增 1×睡眠时长，算术见 timer-clock.ts 头注释）。90s 阈值兜底见 timer-clock.ts。
   let lastTickMs = 0
 
   // [P2-11 修复] 音频自然播放结束（自定义文件）→ 停止音频按钮自动隐藏
@@ -36,14 +40,25 @@ export const useTimerStore = defineStore('timer', () => {
     })
   }
 
-  // [L4 睡眠精确处理] 系统唤醒 → 把睡眠时长从计时基准中精确扣除
-  // 比 startTicking 里的 90s 启发式更可靠（powerMonitor 直报睡眠时长，不怕校时误判）
+  // [L4 睡眠精确处理] 系统唤醒 → 把睡眠时长从计时基准中精确扣除。
+  // [睡眠双重补偿修复] 与 tick 循环共用同一份 lastTickMs 账本，做一次「虚拟 tick」式补偿：
+  // 唤醒后 200ms 轮询的 tick 往往先跑（已补偿），此时 gap 只剩几十 ms，这里自然不会再补 ——
+  // 旧版两处各补一次（这里 += gapMs，tick 再 += gap-1s），基准共平移 2×gap-1s，而正确的单次
+  // 补偿是 gap-1s，净差恰为 1×gap → 唤醒后倒计时虚增 1×睡眠时长；2026-09-28 首次唤醒显示
+  // 110:22，用户报的 209:xx 是两次睡眠叠加。90s 启发式保留作为 resume 事件丢失时的兜底。
+  // [行为变化] 旧版这里 gapMs>2000 即精确补 gapMs，2s~90s 的短挂起也会补；新版统一走 90s
+  // 阈值（SLEEP_JUMP_THRESHOLD_MS）后，2s~90s 短挂起在任何到达时序下都不再补偿 —— 与 Chromium
+  // 后台 intensive throttling（单次最长约 60s）同量级，视为正常节流而非睡眠。
   if (window.electronAPI?.power?.onSystemResume) {
     window.electronAPI.power.onSystemResume((gapMs: number) => {
       if (timerInterval && isRunning.value && gapMs > 2000) {
-        timerStartBaseMs += gapMs  // 睡眠时间不计入专注
-        lastTickMs = Date.now()
-        console.log(`[Timer] 系统唤醒（睡眠 ${Math.round(gapMs / 1000)}s），专注从剩余时间继续`)
+        const now = Date.now()
+        const shift = sleepShiftMs(lastTickMs, now)
+        if (shift > 0) {
+          timerStartBaseMs += shift
+          console.log(`[Timer] 系统唤醒（睡眠 ${Math.round(gapMs / 1000)}s），已一次性从计时基准扣除，专注从剩余时间继续`)
+        }
+        lastTickMs = now
       }
     })
   }
@@ -336,15 +351,13 @@ export const useTimerStore = defineStore('timer', () => {
     }
     timerInterval = setInterval(() => {
       const now = Date.now()
-      // [Bug1 修复] 检测时间跳变（系统睡眠/休眠/挂起/时钟调整）：
-      // 跳变期间进程被冻结，用户并未专注，不应计入 elapsed。
-      // 否则唤醒后第一个 tick 的 elapsed 虚高，剩余时间断崖归零、番茄被误判完成
-      // （实际只专注了几十秒）。阈值 90s：Chromium 后台 intensive throttling
-      // 单次最长约 60s，不会误伤正常后台节流。
-      const gap = now - lastTickMs
-      if (gap > 90000) {
-        timerStartBaseMs += gap - 1000  // 平移基准：跳变期只计 1 秒正常流逝
-        console.log(`[Timer] 检测到时间跳变 ${Math.round(gap / 1000)}s（睡眠/挂起），已从计时基准扣除，专注从剩余时间继续`)
+      // [Bug1 修复] 睡眠/挂起/时钟跳变补偿：跳变期进程被冻结，用户并未专注，不计入 elapsed。
+      // 判定统一走 sleepShiftMs（与 power:resumed 回调共用 lastTickMs 账本，保证只补偿一次）；
+      // 保留 90s 阈值兜底：powerMonitor 事件万一丢失时 tick 仍能自行检测。
+      const shift = sleepShiftMs(lastTickMs, now)
+      if (shift > 0) {
+        timerStartBaseMs += shift
+        console.log(`[Timer] 检测到时间跳变 ${Math.round((shift + SLEEP_GRACE_MS) / 1000)}s（睡眠/挂起），已从计时基准扣除，专注从剩余时间继续`)
       }
       lastTickMs = now
       const elapsed = Math.floor((now - timerStartBaseMs) / 1000)
